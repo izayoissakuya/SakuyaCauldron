@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sakuya's Haunted Cauldron</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main id="scene" aria-label="Haunted cauldron overlay">
+    <section id="cauldron-widget" class="cauldron-widget" aria-live="polite">
+
+      <!-- GIF'lerinin yükleneceği ve app.js'in aradığı ana resim etiketi -->
+      <img id="cauldronArt" src="/assets/cauldron-idle.gif" alt="Cauldron" style="position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1;">
+
+      <!-- Eşya atıldığında çalışan emojilerin barınacağı katman -->
+      <div id="flyLayer" style="position: absolute; inset: 0; z-index: 2; pointer-events: none;"></div>
+
+      <div class="progress-area">
+        <div class="progress-meta"><span class="progress-label">CAULDRON</span><span id="progress-value">0%</span></div>
+        <div class="progress-track"><div id="progress-fill" class="progress-fill"></div></div>
+      </div>
+
+      <div id="potion-result" class="potion-result" aria-live="assertive" style="z-index: 6;">
+        <span class="potion-bottle" aria-hidden="true">🧪</span>
+        <span id="potion-message">POTION BREWED!</span>
+      </div>
+
+      <div id="status-chip" class="status-chip" style="z-index: 6;">Waiting for chat...</div>
+    </section>
+
+    <section id="test-panel" class="test-panel" aria-label="Test controls">
+      <div class="test-title">CAULDRON TEST MODE</div>
+      <div class="test-buttons">
+        <button id="test-throw" type="button">Test !throw</button>
+        <button id="test-reset" type="button" class="muted-button">Reset</button>
+      </div>
+      <div class="test-help">Hidden in OBS unless the URL contains <code>?test=1</code>.</div>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

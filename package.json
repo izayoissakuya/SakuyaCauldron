@@ -1,0 +1,17 @@
+{
+  "name": "sakuya-haunted-cauldron",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lightweight Twitch chat cauldron overlay starter for OBS",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "emojilib": "^4.0.3",
+    "tmi.js": "^1.8.5"
+  }
+}
