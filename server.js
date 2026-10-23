@@ -151,6 +151,50 @@ let twitchClient = null;
 let oauthState = null;
 let testThrowNumber = 0;
 let brewResetTimer = null;
+let lastGlobalThrow = 0;
+let isVotingOpen = false;
+let votes = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+let votedUsers = new Set();
+
+const punishmentOptions = [
+  "1️⃣ 20 Push-ups",
+  "2️⃣ Eat a Lemon",
+  "3️⃣ Pistol Only for 1 game",
+  "4️⃣ Play without skill 1 game",
+  "5️⃣ VIP a Random Chatter"
+];
+
+function startPunishmentVote() {
+  if (isVotingOpen || !twitchClient) return;
+
+  isVotingOpen = true;
+  votes = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  votedUsers.clear();
+
+  const optionsText = punishmentOptions.join(" | ");
+  // Oylama başladığında chate atılacak İngilizce mesaj
+  twitchClient.say(config.channel, `💀 PUNISHMENT TIME! You have 30 seconds to vote by typing a number from 1 to 5 in chat! Options: ${optionsText}`);
+
+  // 30 saniye (30000 ms) sonra oylamayı bitir
+  setTimeout(() => {
+    isVotingOpen = false;
+    
+    let winner = "1";
+    let maxVotes = -1;
+    
+    for (const [option, count] of Object.entries(votes)) {
+      if (count > maxVotes) {
+        maxVotes = count;
+        winner = option;
+      }
+    }
+    
+    const winningPunishment = punishmentOptions[winner - 1];
+    // Oylama bittiğinde kazananı açıklayan İngilizce mesaj
+    twitchClient.say(config.channel, `🔔 VOTING ENDED! The winning punishment with ${maxVotes} votes is: ${winningPunishment}`);
+
+  }, 30000);
+}
 
 function readSavedTokens() {
   try {
@@ -297,13 +341,30 @@ function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest
   if (!cleanUsername || state.brewing) return { accepted: false, reason: state.brewing ? 'brewing' : 'invalid-user' };
 
   const now = Date.now();
-  const last = cooldowns.get(usernameKey) || 0;
-  if (!bypassCooldown && config.cooldownMs > 0 && now - last < config.cooldownMs) {
-    return { accepted: false, reason: 'cooldown' };
+
+  // 1. GLOBAL KONTROL: Herhangi bir atıştan sonraki 5 saniye
+  if (!bypassCooldown && (now - lastGlobalThrow < 5000)) {
+    return { accepted: false, reason: 'global-cooldown' };
   }
-  cooldowns.set(usernameKey, now);
+
+  // 2. KULLANICI KONTROLÜ: Aynı kişinin 2 dakika (120000 ms) beklemesi
+  const userCooldownMs = 120 * 1000;
+  const lastUserThrow = cooldowns.get(usernameKey) || 0;
+  
+  if (!bypassCooldown && (now - lastUserThrow < userCooldownMs)) {
+    const remainingSec = Math.ceil((userCooldownMs - (now - lastUserThrow)) / 1000);
+    return { accepted: false, reason: 'user-cooldown', remaining: remainingSec };
+  }
+
+  // Kontroller geçildiyse süreleri güncelle
+  if (!bypassCooldown) {
+    lastGlobalThrow = now;
+    cooldowns.set(usernameKey, now);
+  }
+
+  // Harita (Map) temizliği (şişmeyi önlemek için)
   if (cooldowns.size > 2000) {
-    const expiry = now - Math.max(config.cooldownMs, 60_000) * 2;
+    const expiry = now - (userCooldownMs * 2);
     for (const [key, timestamp] of cooldowns) if (timestamp < expiry) cooldowns.delete(key);
   }
 
@@ -334,12 +395,14 @@ function completePotion() {
   const result = {
     potionNumber: state.potionNumber,
     message: 'POTION BREWED!',
-    // Intentionally no reward/punishment selection in this first version.
     timestamp: Date.now(),
   };
   broadcastState();
   broadcast('potionComplete', result);
-  console.log(`[CAULDRON] Iksir hazir (#${state.potionNumber}). Odul/ceza sistemi daha eklenmedi.`);
+  console.log(`[CAULDRON] Iksir hazir (#${state.potionNumber}). Oylama basliyor.`);
+
+  // Kazan %100 olunca sohbette oylamayı otomatik başlat!
+  startPunishmentVote();
 
   if (brewResetTimer) clearTimeout(brewResetTimer);
   brewResetTimer = setTimeout(() => {
@@ -388,7 +451,6 @@ async function startTwitchClient() {
       connection: { secure: true, reconnect: true },
       identity: {
         username: state.twitchLogin,
-        // tmi.js calls this on connection/reconnection so an expired token can be refreshed.
         password: async () => `oauth:${await getFreshAccessToken()}`,
       },
       channels: [config.channel],
@@ -410,18 +472,44 @@ async function startTwitchClient() {
     client.on('notice', (_channel, message) => {
       console.warn('[Twitch notice]', message);
     });
-    client.on('message', (channel, tags, message) => {
-      if (!message || !channel) return;
+
+    client.on('message', (channel, tags, message, self) => {
+      // Botun kendi mesajlarını döngüye sokmasını engelle
+      if (self || !message || !channel) return;
+      
+      const username = tags['display-name'] || tags.username || 'viewer';
+
+      // 1. Oylama (Punishment Vote) Kontrolü
+      if (isVotingOpen) {
+        const voteMatch = message.trim().match(/^[1-5]$/);
+        if (voteMatch && !votedUsers.has(username)) {
+          const vote = voteMatch[0];
+          votes[vote]++;
+          votedUsers.add(username);
+          return; // Oy verildiyse !throw komutunu kontrol etmeden çık
+        }
+      }
+
+      // 2. !throw Komutu Kontrolü
       const match = /^!throw(?:\s+([\s\S]*))?$/i.exec(message.trim());
       if (!match) return;
 
-      const username = tags['display-name'] || tags.username || 'viewer';
       const requestedEmoji = findThrowEmoji(match[1] || '');
 
-      performThrow(username, requestedEmoji, {
+      // Atışı yap ve sonucu 'result' değişkenine kaydet
+      const result = performThrow(username, requestedEmoji, {
         bypassCooldown: false,
         isTest: false
       });
+
+      // 3. Cooldown (Bekleme Süresi) Uyarıları
+      if (!result.accepted) {
+        if (result.reason === 'global-cooldown') {
+          twitchClient.say(channel, `@${username}, you should wait a little!`);
+        } else if (result.reason === 'user-cooldown') {
+          twitchClient.say(channel, `@${username}, you must wait ${result.remaining} seconds before throwing again!`);
+        }
+      }
     });
 
     await client.connect();
@@ -519,7 +607,7 @@ const server = http.createServer(async (req, res) => {
       client_id: config.clientId,
       redirect_uri: `http://localhost:${config.port}/auth/callback`,
       response_type: 'code',
-      scope: 'chat:read',
+      scope: 'chat:read chat:edit', // Botun mesaj yazabilmesi için chat:edit izni eklendi
       state: oauthState,
     });
     res.writeHead(302, { Location: `https://id.twitch.tv/oauth2/authorize?${params.toString()}` });
