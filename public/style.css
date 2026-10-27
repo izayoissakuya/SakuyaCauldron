@@ -127,11 +127,123 @@ body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #fff; }
 .potion-bottle { font-size: 34px; filter: drop-shadow(0 0 8px #b77aff); }
 #potion-message { font-size: 12px; font-weight: 900; letter-spacing: .13em; text-align: center; }
 
+/* --- CEZA OYLAMA PANELİ --- */
+.vote-panel {
+  position: absolute;
+  z-index: 20;
+  top: clamp(18px, 3vh, 44px);
+  right: clamp(18px, 2.8vw, 52px);
+  width: clamp(290px, 23vw, 410px);
+  padding: 14px 14px 12px;
+  border: 1px solid rgba(229, 200, 255, .55);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(36, 18, 54, .95), rgba(17, 8, 29, .95));
+  box-shadow: 0 0 30px rgba(170, 115, 255, .35), inset 0 0 18px rgba(170, 115, 255, .12);
+  color: #fff;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(36px) scale(.96);
+  transition: opacity .35s ease, transform .35s cubic-bezier(.2, .9, .3, 1.1), visibility 0s linear .35s;
+}
+.vote-panel.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity .35s ease, transform .35s cubic-bezier(.2, .9, .3, 1.1), visibility 0s;
+}
+
+.vote-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.vote-title {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--magic-lilac);
+  font-size: 13px; font-weight: 900; letter-spacing: .14em;
+  text-shadow: 0 0 10px var(--magic-violet), 0 0 20px var(--magic-violet);
+}
+.vote-skull { font-size: 20px; filter: drop-shadow(0 0 8px var(--magic-violet)); }
+.vote-clock {
+  display: flex; align-items: baseline; gap: 2px;
+  color: var(--magic-green);
+  font-size: 30px; font-weight: 900; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 12px rgba(46, 204, 113, .8);
+}
+.vote-clock small { font-size: 13px; font-weight: 800; opacity: .8; }
+.vote-clock.urgent { color: #ff8aa8; text-shadow: 0 0 12px rgba(255, 80, 120, .85); animation: vote-urgent .5s ease-in-out infinite alternate; }
+
+.vote-hint { margin: 6px 0 10px; color: rgba(239, 223, 255, .85); font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.vote-hint b { color: var(--magic-green); font-weight: 900; }
+
+.vote-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; }
+.vote-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(170, 115, 255, .3);
+  border-radius: 12px;
+  background: rgba(12, 6, 22, .65);
+  transition: opacity .4s ease, filter .4s ease, border-color .3s ease, box-shadow .3s ease, background .3s ease;
+}
+.vote-row > * { position: relative; z-index: 1; }
+.vote-bar {
+  position: absolute; z-index: 0;
+  inset: 0 auto 0 0;
+  width: var(--share, 0%);
+  background: linear-gradient(90deg, rgba(170, 115, 255, .6), rgba(170, 115, 255, .16));
+  transition: width .4s ease-out;
+}
+.vote-num {
+  display: grid; place-items: center;
+  width: 24px; height: 24px;
+  border: 1px solid rgba(229, 200, 255, .7);
+  border-radius: 50%;
+  background: rgba(170, 115, 255, .35);
+  font-size: 13px; font-weight: 900;
+}
+.vote-label { font-size: 14px; font-weight: 700; line-height: 1.2; text-shadow: 0 1px 4px #0b0612; }
+.vote-count { min-width: 24px; text-align: right; font-size: 17px; font-weight: 900; font-variant-numeric: tabular-nums; text-shadow: 0 0 8px rgba(170, 115, 255, .8); }
+
+.vote-row.leading { border-color: rgba(229, 200, 255, .95); box-shadow: 0 0 14px rgba(170, 115, 255, .55); }
+.vote-row.leading .vote-bar { background: linear-gradient(90deg, rgba(196, 150, 255, .8), rgba(196, 150, 255, .22)); }
+.vote-row.winner {
+  border-color: var(--magic-green);
+  background: rgba(147, 244, 183, .15);
+  box-shadow: 0 0 20px rgba(46, 204, 113, .6);
+  animation: vote-winner 1.1s ease-in-out infinite alternate;
+}
+.vote-row.winner .vote-bar { background: linear-gradient(90deg, rgba(46, 204, 113, .7), rgba(147, 244, 183, .2)); }
+.vote-row.loser { opacity: .35; filter: saturate(.5); }
+
+.vote-timer {
+  height: 8px; margin-top: 12px; padding: 1px;
+  border: 1px solid rgba(170, 115, 255, .5);
+  border-radius: 20px;
+  background: rgba(10, 5, 20, .7);
+  overflow: hidden;
+}
+.vote-timer-fill {
+  width: 100%; height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #aa73ff, #ff8ad8);
+  box-shadow: 0 0 10px rgba(170, 115, 255, .8);
+}
+
+.vote-result { display: none; margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(229, 200, 255, .4); text-align: center; }
+.vote-result-kicker { color: var(--magic-green); font-size: 10px; font-weight: 900; letter-spacing: .16em; text-shadow: 0 0 8px rgba(46, 204, 113, .7); }
+.vote-result-label { margin-top: 4px; font-size: 19px; font-weight: 900; line-height: 1.2; text-shadow: 0 0 14px var(--magic-violet); }
+.vote-panel.finished .vote-result { display: block; }
+.vote-panel.finished .vote-hint,
+.vote-panel.finished .vote-clock,
+.vote-panel.finished .vote-timer { display: none; }
+
 /* --- TEST PANELİ --- */
 .test-panel { display: none; position: fixed; left: 18px; top: 18px; width: 260px; padding: 14px; border: 1px solid rgba(208, 176, 255, .55); border-radius: 12px; background: rgba(18, 12, 28, .91); box-shadow: 0 8px 30px #0004; pointer-events: auto; font-size: 12px; color: #f4ebff; }
 .test-mode .test-panel { display: block; }
 .test-title { font-weight: 900; letter-spacing: .12em; margin-bottom: 10px; }
-.test-buttons { display: flex; gap: 8px; }
+.test-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .test-panel button { border: 0; border-radius: 7px; background: #8e64c7; color: white; font-weight: 800; padding: 9px 12px; cursor: pointer; }
 .test-panel button:hover { filter: brightness(1.12); }
 .test-panel .muted-button { background: #483656; }
@@ -145,6 +257,9 @@ body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #fff; }
   70% { opacity: 1; transform: translate(-50%, 150px) scale(1) rotate(-5deg); } 
   100% { top: 60%; opacity: 0; transform: translate(-50%, 180px) scale(0.5) rotate(0deg); } 
 }
+
+@keyframes vote-urgent { from { transform: scale(1); } to { transform: scale(1.12); } }
+@keyframes vote-winner { from { box-shadow: 0 0 12px rgba(46, 204, 113, .45); } to { box-shadow: 0 0 26px rgba(46, 204, 113, .9); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }

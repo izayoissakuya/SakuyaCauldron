@@ -21,9 +21,23 @@ const connectionStatus = document.getElementById('status-chip');
 const completeToast = document.getElementById('potion-result');
 const potionMessage = document.getElementById('potion-message');
 
+const votePanel = document.getElementById('vote-panel');
+const voteList = document.getElementById('vote-list');
+const voteClock = document.getElementById('vote-clock');
+const voteSeconds = document.getElementById('vote-seconds');
+const voteTimerFill = document.getElementById('vote-timer-fill');
+const voteTitleText = document.getElementById('vote-title-text');
+const voteResultKicker = document.getElementById('vote-result-kicker');
+const voteResultLabel = document.getElementById('vote-result-label');
+const VOTE_RESULT_HOLD_MS = 8000; // Kazanan ekranda bu kadar kalır
+const VOTE_URGENT_SECONDS = 5;
+
 let animationQueue = Promise.resolve();
 let lastState = null;
 let potionToastTimer = null;
+let voteActive = false;
+let voteTick = null;
+let voteHideTimer = null;
 
 function delay(ms) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -66,6 +80,134 @@ function renderState(data = {}) {
   }
   
   if (stage) stage.classList.toggle('brewing', Boolean(data.brewing));
+
+  // OBS kaynağı oylama sırasında yenilenirse paneli kaldığı yerden göster
+  if (data.vote?.open && !voteActive) showVote(data.vote);
+}
+
+/* --- CEZA OYLAMA PANELİ --- */
+function buildVoteRows(options = []) {
+  if (!voteList) return;
+  voteList.replaceChildren();
+  for (const option of options) {
+    const row = document.createElement('li');
+    row.className = 'vote-row';
+    row.dataset.id = String(option.id);
+
+    const bar = document.createElement('span');
+    bar.className = 'vote-bar';
+    const num = document.createElement('span');
+    num.className = 'vote-num';
+    num.textContent = String(option.id);
+    const label = document.createElement('span');
+    label.className = 'vote-label';
+    label.textContent = option.label;
+    const count = document.createElement('span');
+    count.className = 'vote-count';
+    count.textContent = '0';
+
+    row.append(bar, num, label, count);
+    voteList.appendChild(row);
+  }
+}
+
+function updateVoteCounts(votes = {}, total = 0) {
+  if (!voteList) return;
+  const counts = [...voteList.children].map(row => Number(votes[row.dataset.id]) || 0);
+  const max = Math.max(0, ...counts);
+  [...voteList.children].forEach((row, index) => {
+    const count = counts[index];
+    row.style.setProperty('--share', `${total > 0 ? (count / total) * 100 : 0}%`);
+    row.querySelector('.vote-count').textContent = String(count);
+    row.classList.toggle('leading', max > 0 && count === max);
+  });
+}
+
+function stopVoteTick() {
+  if (voteTick) window.clearInterval(voteTick);
+  voteTick = null;
+}
+
+function startVoteCountdown(remainingMs, durationMs) {
+  stopVoteTick();
+  const deadline = Date.now() + Math.max(0, remainingMs);
+  const duration = Math.max(1000, durationMs || remainingMs || 30000);
+
+  // Çubuğu kalan orandan başlatıp kalan süre boyunca sıfıra doğru kaydır
+  if (voteTimerFill) {
+    voteTimerFill.style.transition = 'none';
+    voteTimerFill.style.width = `${Math.min(100, (remainingMs / duration) * 100)}%`;
+    void voteTimerFill.offsetWidth; // yeniden akış: geçişin sıfırdan başlaması için
+    voteTimerFill.style.transition = `width ${Math.max(0, remainingMs)}ms linear`;
+    voteTimerFill.style.width = '0%';
+  }
+
+  const render = () => {
+    const secondsLeft = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    if (voteSeconds) voteSeconds.textContent = String(secondsLeft);
+    if (voteClock) voteClock.classList.toggle('urgent', secondsLeft > 0 && secondsLeft <= VOTE_URGENT_SECONDS);
+    if (secondsLeft <= 0) stopVoteTick();
+  };
+  render();
+  voteTick = window.setInterval(render, 250);
+}
+
+function showVote(snapshot = {}) {
+  if (!votePanel) return;
+  if (voteHideTimer) window.clearTimeout(voteHideTimer);
+  voteHideTimer = null;
+  voteActive = true;
+
+  votePanel.classList.remove('finished');
+  if (voteTitleText) voteTitleText.textContent = 'PUNISHMENT VOTE';
+  buildVoteRows(snapshot.options);
+  updateVoteCounts(snapshot.votes, snapshot.total);
+  startVoteCountdown(snapshot.remainingMs ?? snapshot.durationMs, snapshot.durationMs);
+
+  votePanel.classList.add('visible');
+  votePanel.setAttribute('aria-hidden', 'false');
+}
+
+function hideVote() {
+  voteActive = false;
+  stopVoteTick();
+  if (voteHideTimer) window.clearTimeout(voteHideTimer);
+  voteHideTimer = null;
+  if (voteClock) voteClock.classList.remove('urgent');
+  if (!votePanel) return;
+  votePanel.classList.remove('visible');
+  votePanel.setAttribute('aria-hidden', 'true');
+}
+
+function finishVote(result = {}) {
+  if (!votePanel) return;
+  if (!voteList?.children.length) showVote({ options: [], votes: {}, total: 0, remainingMs: 0, durationMs: 1000 });
+  voteActive = false;
+  stopVoteTick();
+  if (voteHideTimer) window.clearTimeout(voteHideTimer);
+
+  updateVoteCounts(result.votes, result.total);
+  [...voteList.children].forEach(row => {
+    const isWinner = Number(row.dataset.id) === Number(result.winner);
+    row.classList.remove('leading');
+    row.classList.toggle('winner', isWinner);
+    row.classList.toggle('loser', !isWinner);
+  });
+
+  if (voteSeconds) voteSeconds.textContent = '0';
+  if (voteClock) voteClock.classList.remove('urgent');
+  if (voteTitleText) voteTitleText.textContent = 'VOTING ENDED';
+
+  const votesText = `${result.maxVotes} ${result.maxVotes === 1 ? 'VOTE' : 'VOTES'}`;
+  let kicker = `WINNER · ${votesText}`;
+  if (result.mode === 'tie') kicker = `TIE AT ${votesText} · PICKED AT RANDOM`;
+  if (result.mode === 'no-votes') kicker = 'NO VOTES · PICKED AT RANDOM';
+  if (voteResultKicker) voteResultKicker.textContent = kicker;
+  if (voteResultLabel) voteResultLabel.textContent = result.label || '';
+
+  votePanel.classList.add('finished', 'visible');
+  votePanel.setAttribute('aria-hidden', 'false');
+  voteHideTimer = window.setTimeout(hideVote, VOTE_RESULT_HOLD_MS);
 }
 
 function showFlyingItem(emoji) {
@@ -195,6 +337,23 @@ async function connectEvents() {
   events.addEventListener('brewReset', () => {
     queueAnimation(async () => resetBrew(), 'Reset Cauldron');
   });
+  // Oylama paneli kazan animasyon sırasından bağımsız, anında çalışır
+  events.addEventListener('voteStart', event => {
+    try { showVote(JSON.parse(event.data)); }
+    catch (error) { console.warn('[Overlay] voteStart failed:', error); }
+  });
+  events.addEventListener('voteUpdate', event => {
+    try {
+      const data = JSON.parse(event.data);
+      if (!voteActive) showVote(data);
+      else updateVoteCounts(data.votes, data.total);
+    } catch (error) { console.warn('[Overlay] voteUpdate failed:', error); }
+  });
+  events.addEventListener('voteEnd', event => {
+    try { finishVote(JSON.parse(event.data)); }
+    catch (error) { console.warn('[Overlay] voteEnd failed:', error); }
+  });
+  events.addEventListener('voteCancel', hideVote);
 }
 
 async function runTestAction(endpoint) {
@@ -213,6 +372,8 @@ const testPanel = document.getElementById('test-panel');
 if (new URLSearchParams(window.location.search).get('test') === '1' && testPanel) {
   document.body.classList.add('test-mode');
   document.getElementById('test-throw')?.addEventListener('click', () => runTestAction('/api/test/throw'));
+  document.getElementById('test-start-vote')?.addEventListener('click', () => runTestAction('/api/test/start-vote'));
+  document.getElementById('test-vote')?.addEventListener('click', () => runTestAction('/api/test/vote'));
   document.getElementById('test-reset')?.addEventListener('click', () => runTestAction('/api/test/reset'));
 }
 

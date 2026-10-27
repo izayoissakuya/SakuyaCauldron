@@ -40,8 +40,14 @@ const config = {
   host: '127.0.0.1',
   port: clampInt(process.env.PORT, 3131, 1, 65535),
   fillPerThrow: clampInt(process.env.FILL_PER_THROW, 10, 1, 100),
-  cooldownMs: clampInt(process.env.USER_COOLDOWN_SECONDS, 3, 0, 3600) * 1000,
+  // Aynı kişinin iki !throw arası bekleme süresi (eskiden koda gömülü 120 sn idi)
+  userCooldownMs: clampInt(process.env.THROW_COOLDOWN_SECONDS, 120, 0, 3600) * 1000,
+  // Herhangi iki !throw arası ortak bekleme (eskiden koda gömülü 5 sn idi)
+  globalCooldownMs: clampInt(process.env.GLOBAL_COOLDOWN_SECONDS, 5, 0, 600) * 1000,
+  // Bot "şu kadar bekle" uyarısını chat'e yazsın mı
+  cooldownNotices: !/^(0|false|off|no)$/i.test((process.env.COOLDOWN_NOTICES || '').trim()),
   brewResetMs: clampInt(process.env.BREW_RESET_MS, 4500, 1000, 60000),
+  voteMs: clampInt(process.env.VOTE_SECONDS, 30, 5, 300) * 1000,
 };
 
 function clampInt(value, fallback, min, max) {
@@ -84,11 +90,46 @@ function normalizeEmojiText(value) {
     .trim();
 }
 
+// ---------------------------------------------------------------------------
+// Emoji filtresi
+// ---------------------------------------------------------------------------
+const DEFAULT_THROW_EMOJI = '🎁';
+// Yayında göstermek istemediğin emojiler. Kendi eklemelerini .env içindeki
+// BLOCKED_EMOJIS satırına yan yana yazabilirsin (örn. BLOCKED_EMOJIS=🔫🍺).
+const DEFAULT_BLOCKED_EMOJIS = '🍆🍑💦🖕🔞👅💉💊🚬';
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
+
+// Görünüm seçicisi (FE0F) ve ten rengi farklarını yok sayarak karşılaştır
+function emojiKey(value) {
+  return String(value || '').replace(/[︎️\u{1F3FB}-\u{1F3FF}]/gu, '');
+}
+
+function listEmojis(text) {
+  const found = [];
+  for (const { segment } of graphemes.segment(String(text || ''))) {
+    if (PICTOGRAPHIC.test(segment)) found.push(segment);
+  }
+  return found;
+}
+
+const blockedEmojis = new Set(
+  listEmojis(DEFAULT_BLOCKED_EMOJIS + (process.env.BLOCKED_EMOJIS || '')).map(emojiKey)
+);
+
+function isEmojiBlocked(emoji) {
+  return blockedEmojis.has(emojiKey(emoji));
+}
+
 function findThrowEmoji(input) {
+  // Doğrudan emoji yazıldıysa (!throw 🎃) ilkini kullan
+  const [direct] = listEmojis(input);
+  if (direct) return direct;
+
   const text = normalizeEmojiText(input);
 
   // Boş komut: hediye kutusu
-  if (!text) return '🎁';
+  if (!text) return DEFAULT_THROW_EMOJI;
 
   // Türkçe özel eşleştirmeler
   if (TURKISH_EMOJI_ALIASES[text]) {
@@ -131,9 +172,19 @@ function findThrowEmoji(input) {
   return bestEmoji || '🎁';
 }
 
+// Chat'ten gelen metni ekrana düşecek emojiye çevirir; engelli emoji çıkarsa
+// atış yine sayılır ama hediye kutusu düşer.
+function resolveThrowEmoji(input) {
+  const emoji = findThrowEmoji(input);
+  if (isEmojiBlocked(emoji)) {
+    console.log(`[FILTER] Engelli emoji hediye kutusuna cevrildi: ${emoji}`);
+    return DEFAULT_THROW_EMOJI;
+  }
+  return emoji;
+}
+
 const sseClients = new Set();
 const cooldowns = new Map();
-const userEmojis = new Map();
 
 const state = {
   progress: 0,
@@ -150,50 +201,151 @@ let savedTokens = readSavedTokens();
 let twitchClient = null;
 let oauthState = null;
 let testThrowNumber = 0;
+let testVoterNumber = 0;
 let brewResetTimer = null;
 let lastGlobalThrow = 0;
-let isVotingOpen = false;
-let votes = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
-let votedUsers = new Set();
-
-const punishmentOptions = [
-  "1️⃣ 20 Push-ups",
-  "2️⃣ Eat a Lemon",
-  "3️⃣ Pistol Only for 1 game",
-  "4️⃣ Play without skill 1 game",
-  "5️⃣ VIP a Random Chatter"
+// ---------------------------------------------------------------------------
+// Ceza oylaması
+// ---------------------------------------------------------------------------
+const PUNISHMENTS = [
+  '20 Push-ups',
+  'Eat a Lemon',
+  'Pistol Only for 1 game',
+  'Play without skill 1 game',
+  'VIP a Random Chatter',
 ];
+const OPTION_IDS = PUNISHMENTS.map((_, index) => index + 1);
+const KEYCAPS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
+// Chat mesajlarında kullanılan etiketler (eski metinle birebir aynı).
+const punishmentOptions = PUNISHMENTS.map((text, index) => `${KEYCAPS[index]} ${text}`);
+
+let isVotingOpen = false;
+let votes = emptyVotes();
+let votedUsers = new Set();
+let voteEndsAt = 0;
+let voteTimer = null;
+let voteBroadcastTimer = null;
+
+function emptyVotes() {
+  return Object.fromEntries(OPTION_IDS.map(id => [id, 0]));
+}
+
+function totalVotes() {
+  return OPTION_IDS.reduce((sum, id) => sum + votes[id], 0);
+}
+
+// Overlay'in oylama panelini çizmek için ihtiyaç duyduğu her şey.
+function voteSnapshot() {
+  return {
+    open: isVotingOpen,
+    options: PUNISHMENTS.map((label, index) => ({ id: index + 1, label })),
+    votes: { ...votes },
+    total: totalVotes(),
+    durationMs: config.voteMs,
+    remainingMs: isVotingOpen ? Math.max(0, voteEndsAt - Date.now()) : 0,
+  };
+}
+
+function chatSay(message) {
+  if (!twitchClient) return;
+  try {
+    Promise.resolve(twitchClient.say(config.channel, message)).catch(error => {
+      console.warn('[Twitch] Mesaj gonderilemedi:', error?.message || error);
+    });
+  } catch (error) {
+    console.warn('[Twitch] Mesaj gonderilemedi:', error?.message || error);
+  }
+}
+
+// Oy yağdığında her oyda yayın yapmamak için en fazla 5 kez/sn güncelle.
+function scheduleVoteBroadcast() {
+  if (voteBroadcastTimer) return;
+  voteBroadcastTimer = setTimeout(() => {
+    voteBroadcastTimer = null;
+    if (isVotingOpen) broadcast('voteUpdate', voteSnapshot());
+  }, 200);
+}
+
+function castVote(userKey, option) {
+  const optionId = Number(option);
+  if (!isVotingOpen || !OPTION_IDS.includes(optionId)) return false;
+  if (!userKey || votedUsers.has(userKey)) return false;
+  votes[optionId] += 1;
+  votedUsers.add(userKey);
+  scheduleVoteBroadcast();
+  return true;
+}
+
+// En çok oyu alanı seçer. Eşitlikte eşit oylu seçenekler arasından,
+// hiç oy yoksa tüm seçenekler arasından rastgele seçer.
+function pickVoteWinner() {
+  const maxVotes = Math.max(...OPTION_IDS.map(id => votes[id]));
+  const candidates = OPTION_IDS.filter(id => votes[id] === maxVotes);
+  const mode = maxVotes === 0 ? 'no-votes' : candidates.length > 1 ? 'tie' : 'clear';
+  const winner = candidates[crypto.randomInt(candidates.length)];
+  return { winner, maxVotes, candidates, mode };
+}
+
+function clearVoteTimers() {
+  if (voteTimer) clearTimeout(voteTimer);
+  if (voteBroadcastTimer) clearTimeout(voteBroadcastTimer);
+  voteTimer = null;
+  voteBroadcastTimer = null;
+}
 
 function startPunishmentVote() {
-  if (isVotingOpen || !twitchClient) return;
+  if (isVotingOpen) return;
 
   isVotingOpen = true;
-  votes = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  votes = emptyVotes();
   votedUsers.clear();
+  voteEndsAt = Date.now() + config.voteMs;
 
-  const optionsText = punishmentOptions.join(" | ");
-  // Oylama başladığında chate atılacak İngilizce mesaj
-  twitchClient.say(config.channel, `💀 PUNISHMENT TIME! You have 30 seconds to vote by typing a number from 1 to 5 in chat! Options: ${optionsText}`);
+  const seconds = Math.round(config.voteMs / 1000);
+  const optionsText = punishmentOptions.join(' | ');
+  chatSay(`💀 PUNISHMENT TIME! You have ${seconds} seconds to vote by typing a number from 1 to 5 in chat! Options: ${optionsText}`);
+  broadcast('voteStart', voteSnapshot());
+  console.log(`[VOTE] Oylama basladi (${seconds} sn).`);
 
-  // 30 saniye (30000 ms) sonra oylamayı bitir
-  setTimeout(() => {
-    isVotingOpen = false;
-    
-    let winner = "1";
-    let maxVotes = -1;
-    
-    for (const [option, count] of Object.entries(votes)) {
-      if (count > maxVotes) {
-        maxVotes = count;
-        winner = option;
-      }
-    }
-    
-    const winningPunishment = punishmentOptions[winner - 1];
-    // Oylama bittiğinde kazananı açıklayan İngilizce mesaj
-    twitchClient.say(config.channel, `🔔 VOTING ENDED! The winning punishment with ${maxVotes} votes is: ${winningPunishment}`);
+  clearVoteTimers();
+  voteTimer = setTimeout(endPunishmentVote, config.voteMs);
+}
 
-  }, 30000);
+function endPunishmentVote() {
+  if (!isVotingOpen) return;
+  isVotingOpen = false;
+  clearVoteTimers();
+
+  const { winner, maxVotes, candidates, mode } = pickVoteWinner();
+  const winningPunishment = punishmentOptions[winner - 1];
+
+  if (mode === 'clear') {
+    chatSay(`🔔 VOTING ENDED! The winning punishment with ${maxVotes} votes is: ${winningPunishment}`);
+  } else if (mode === 'tie') {
+    const tied = candidates.map(id => `#${id}`).join(', ');
+    chatSay(`🔔 VOTING ENDED! It's a tie between ${tied} with ${maxVotes} votes each, so one was picked at random: ${winningPunishment}`);
+  } else {
+    chatSay(`🔔 VOTING ENDED! Nobody voted, so a punishment was picked at random: ${winningPunishment}`);
+  }
+
+  broadcast('voteEnd', {
+    winner,
+    label: PUNISHMENTS[winner - 1],
+    maxVotes,
+    candidates,
+    mode,
+    votes: { ...votes },
+    total: totalVotes(),
+  });
+  console.log(`[VOTE] Bitti: #${winner} ${PUNISHMENTS[winner - 1]} (${mode}, ${maxVotes} oy).`);
+}
+
+function cancelPunishmentVote() {
+  if (!isVotingOpen) return;
+  isVotingOpen = false;
+  clearVoteTimers();
+  broadcast('voteCancel', {});
+  console.log('[VOTE] Oylama iptal edildi.');
 }
 
 function readSavedTokens() {
@@ -293,6 +445,9 @@ async function validateAccessToken(accessToken) {
   if (Array.isArray(payload.scopes) && !payload.scopes.includes('chat:read')) {
     throw new Error('Bu token chat:read iznine sahip degil. Twitch baglantisini yeniden kur.');
   }
+  if (Array.isArray(payload.scopes) && !payload.scopes.includes('chat:edit')) {
+    console.warn('[OAuth] Token chat:edit iznine sahip degil: bot oylama ve bekleme mesajlarini yazamaz. /setup sayfasindan Twitch baglantisini yeniden kur.');
+  }
   return payload;
 }
 
@@ -308,6 +463,7 @@ function currentPublicState() {
     channel: config.channel,
     fillPerThrow: config.fillPerThrow,
     statusMessage: state.statusMessage,
+    vote: voteSnapshot(),
   };
 }
 
@@ -325,14 +481,37 @@ function broadcastState() {
   broadcast('state', currentPublicState());
 }
 
-function stableEmojiFor(username) {
-  if (userEmojis.has(username)) return userEmojis.get(username);
-  let hash = 0;
-  for (const char of username) hash = ((hash * 31) + char.codePointAt(0)) >>> 0;
-  const emoji = ALLOWED_EMOJIS[hash % ALLOWED_EMOJIS.length];
-  userEmojis.set(username, emoji);
-  if (userEmojis.size > 500) userEmojis.delete(userEmojis.keys().next().value);
-  return emoji;
+// ---------------------------------------------------------------------------
+// Bekleme uyarıları: chat'i doldurmasın diye sınırlıdır.
+//  - Ortak (global) beklemede sessiz kalınır; kalabalıkta herkes bu duvara çarpar.
+//  - Kişisel beklemede aynı kişiye en çok 30 sn'de bir, tüm kanala en çok 3 sn'de bir yazılır.
+// ---------------------------------------------------------------------------
+const NOTICE_PER_USER_MS = 30_000;
+const NOTICE_GLOBAL_MS = 3_000;
+const noticeTimes = new Map();
+let lastNoticeAt = 0;
+
+function formatWait(totalSeconds) {
+  const seconds = Math.max(1, Math.ceil(totalSeconds));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+}
+
+function noticeCooldown(username, result) {
+  if (!config.cooldownNotices || result.reason !== 'user-cooldown') return;
+  const now = Date.now();
+  const key = String(username).toLowerCase();
+  if (now - lastNoticeAt < NOTICE_GLOBAL_MS) return;
+  if (now - (noticeTimes.get(key) || 0) < NOTICE_PER_USER_MS) return;
+
+  lastNoticeAt = now;
+  noticeTimes.set(key, now);
+  if (noticeTimes.size > 1000) {
+    for (const [name, time] of noticeTimes) if (now - time > NOTICE_PER_USER_MS) noticeTimes.delete(name);
+  }
+  chatSay(`@${username}, you can throw again in ${formatWait(result.remaining)}.`);
 }
 
 function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest = false } = {}) {
@@ -342,13 +521,13 @@ function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest
 
   const now = Date.now();
 
-  // 1. GLOBAL KONTROL: Herhangi bir atıştan sonraki 5 saniye
-  if (!bypassCooldown && (now - lastGlobalThrow < 5000)) {
+  // 1. GLOBAL KONTROL: Herhangi bir atıştan sonra GLOBAL_COOLDOWN_SECONDS
+  if (!bypassCooldown && (now - lastGlobalThrow < config.globalCooldownMs)) {
     return { accepted: false, reason: 'global-cooldown' };
   }
 
-  // 2. KULLANICI KONTROLÜ: Aynı kişinin 2 dakika (120000 ms) beklemesi
-  const userCooldownMs = 120 * 1000;
+  // 2. KULLANICI KONTROLÜ: Aynı kişi THROW_COOLDOWN_SECONDS beklemeli
+  const userCooldownMs = config.userCooldownMs;
   const lastUserThrow = cooldowns.get(usernameKey) || 0;
   
   if (!bypassCooldown && (now - lastUserThrow < userCooldownMs)) {
@@ -482,11 +661,10 @@ async function startTwitchClient() {
       // 1. Oylama (Punishment Vote) Kontrolü
       if (isVotingOpen) {
         const voteMatch = message.trim().match(/^[1-5]$/);
-        if (voteMatch && !votedUsers.has(username)) {
-          const vote = voteMatch[0];
-          votes[vote]++;
-          votedUsers.add(username);
-          return; // Oy verildiyse !throw komutunu kontrol etmeden çık
+        if (voteMatch) {
+          // Aynı kişi display-name büyük/küçük harf farkıyla iki kez oy veremesin
+          const voterKey = String(tags.username || username).toLowerCase();
+          if (castVote(voterKey, voteMatch[0])) return; // Oy verildiyse !throw komutunu kontrol etmeden çık
         }
       }
 
@@ -494,7 +672,7 @@ async function startTwitchClient() {
       const match = /^!throw(?:\s+([\s\S]*))?$/i.exec(message.trim());
       if (!match) return;
 
-      const requestedEmoji = findThrowEmoji(match[1] || '');
+      const requestedEmoji = resolveThrowEmoji(match[1] || '');
 
       // Atışı yap ve sonucu 'result' değişkenine kaydet
       const result = performThrow(username, requestedEmoji, {
@@ -503,13 +681,7 @@ async function startTwitchClient() {
       });
 
       // 3. Cooldown (Bekleme Süresi) Uyarıları
-      if (!result.accepted) {
-        if (result.reason === 'global-cooldown') {
-          twitchClient.say(channel, `@${username}, you should wait a little!`);
-        } else if (result.reason === 'user-cooldown') {
-          twitchClient.say(channel, `@${username}, you must wait ${result.remaining} seconds before throwing again!`);
-        }
-      }
+      if (!result.accepted) noticeCooldown(username, result);
     });
 
     await client.connect();
@@ -536,7 +708,7 @@ function setupPage() {
   return `<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sakuya Cauldron - Kurulum</title><style>
     :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#100d18;color:#f3edf9;font:16px/1.5 system-ui,Segoe UI,sans-serif;display:grid;place-items:center;min-height:100vh;padding:24px}.card{width:min(680px,100%);background:#1b1526;border:1px solid #55456d;border-radius:20px;padding:28px;box-shadow:0 20px 70px #0006}h1{margin:0 0 6px;font-size:28px}p{color:#c8bdd6}.status{padding:12px 14px;border-radius:12px;background:#292137;margin:18px 0;overflow-wrap:anywhere}.button{display:inline-block;background:#8c65c7;color:white;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:700;margin:4px 6px 4px 0}.button.secondary{background:#372a49}.note{font-size:14px;color:#b9abc9}code{background:#0e0b14;padding:2px 5px;border-radius:4px}</style></head><body><main class="card"><h1>🧙 Sakuya's Haunted Cauldron</h1><p>Yerel kontrol paneli ve Twitch baglantisi.</p><div class="status"><strong>Durum:</strong> ${status}</div>
     ${!configured ? '<p><strong>Once .env dosyasini doldur.</strong> TWITCH_CLIENT_ID, TWITCH_CLIENT_SECRET ve TWITCH_CHANNEL degerlerini gir, sonra sunucuyu yeniden baslat.</p>' : ''}
-    ${configured && !isAuthenticated ? '<p>Twitch hesabinla guvenli OAuth baglantisi kurmak icin asagidaki dugmeye bas. Uygulama yalnizca <code>chat:read</code> izni ister.</p><a class="button" href="/auth">Twitch hesabini bagla</a>' : ''}
+    ${configured && !isAuthenticated ? '<p>Twitch hesabinla guvenli OAuth baglantisi kurmak icin asagidaki dugmeye bas. Uygulama <code>chat:read</code> ve <code>chat:edit</code> izinlerini ister (bot, oylama ve bekleme mesajlarini bagladigin hesapla sohbete yazar).</p><a class="button" href="/auth">Twitch hesabini bagla</a>' : ''}
     ${configured && isAuthenticated ? '<p>Yerel tokens.json dosyasi bulundu. Baglanti tekrar kurulabilir.</p><a class="button" href="/auth">Twitch hesabini yeniden bagla</a>' : ''}
     <a class="button secondary" href="/overlay?test=1">Overlay testini ac</a><p class="note">Bu panel yalnizca bu bilgisayarda acilir. .env ve tokens.json dosyalarini kimseyle paylasma.</p></main></body></html>`;
 }
@@ -651,7 +823,22 @@ const server = http.createServer(async (req, res) => {
     const result = performThrow(username, emoji, { bypassCooldown: true, isTest: true });
     return sendJson(res, result.accepted ? 200 : 409, result);
   }
+  if (req.method === 'POST' && pathname === '/api/test/start-vote') {
+    // Kazanı doldurmadan oylama panelini denemek için
+    if (isVotingOpen) return sendJson(res, 409, { accepted: false, voting: true });
+    startPunishmentVote();
+    return sendJson(res, 200, { accepted: true, voting: isVotingOpen });
+  }
+  if (req.method === 'POST' && pathname === '/api/test/vote') {
+    // Test modunda sahte bir izleyici adına oy ver; ?option=1..5 (verilmezse rastgele)
+    const requested = Number.parseInt(requestUrl.searchParams.get('option'), 10);
+    const option = OPTION_IDS.includes(requested) ? requested : OPTION_IDS[crypto.randomInt(OPTION_IDS.length)];
+    testVoterNumber += 1;
+    const accepted = castVote(`testvoter${testVoterNumber}`, option);
+    return sendJson(res, accepted ? 200 : 409, { accepted, option, voting: isVotingOpen });
+  }
   if (req.method === 'POST' && pathname === '/api/test/reset') {
+    cancelPunishmentVote();
     if (brewResetTimer) clearTimeout(brewResetTimer);
     brewResetTimer = null;
     state.progress = 0;
@@ -729,6 +916,7 @@ server.listen(config.port, config.host, () => {
 function shutdown() {
   clearInterval(heartbeat);
   if (brewResetTimer) clearTimeout(brewResetTimer);
+  clearVoteTimers();
   for (const response of sseClients) {
     try { response.end(); } catch { /* ignored */ }
   }

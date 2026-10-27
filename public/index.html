@@ -29,10 +29,27 @@
       <div id="status-chip" class="status-chip" style="z-index: 6;">Waiting for chat...</div>
     </section>
 
+    <!-- Ceza oylaması paneli: sunucudan gelen voteStart/voteUpdate/voteEnd olaylarıyla çalışır -->
+    <section id="vote-panel" class="vote-panel" aria-live="polite" aria-hidden="true">
+      <header class="vote-head">
+        <div class="vote-title"><span class="vote-skull" aria-hidden="true">💀</span><span id="vote-title-text">PUNISHMENT VOTE</span></div>
+        <div class="vote-clock" id="vote-clock"><span id="vote-seconds">30</span><small>s</small></div>
+      </header>
+      <p class="vote-hint" id="vote-hint">Type <b>1</b> – <b>5</b> in chat to vote</p>
+      <ol id="vote-list" class="vote-list"></ol>
+      <div class="vote-timer"><div id="vote-timer-fill" class="vote-timer-fill"></div></div>
+      <footer id="vote-result" class="vote-result">
+        <div id="vote-result-kicker" class="vote-result-kicker"></div>
+        <div id="vote-result-label" class="vote-result-label"></div>
+      </footer>
+    </section>
+
     <section id="test-panel" class="test-panel" aria-label="Test controls">
       <div class="test-title">CAULDRON TEST MODE</div>
       <div class="test-buttons">
         <button id="test-throw" type="button">Test !throw</button>
+        <button id="test-start-vote" type="button">Start vote</button>
+        <button id="test-vote" type="button">Test vote</button>
         <button id="test-reset" type="button" class="muted-button">Reset</button>
       </div>
       <div class="test-help">Hidden in OBS unless the URL contains <code>?test=1</code>.</div>
