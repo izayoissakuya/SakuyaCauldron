@@ -20,6 +20,10 @@ const progressLabel = document.getElementById('progress-value');
 const connectionStatus = document.getElementById('status-chip');
 const completeToast = document.getElementById('potion-result');
 const potionMessage = document.getElementById('potion-message');
+const activeOutcomesPanel = document.getElementById('active-outcomes');
+const activeOutcomeList = document.getElementById('active-outcome-list');
+const activeOutcomesTitle = document.getElementById('active-outcomes-title');
+const confettiLayer = document.getElementById('confetti-layer');
 
 const votePanel = document.getElementById('vote-panel');
 const voteList = document.getElementById('vote-list');
@@ -27,6 +31,7 @@ const voteClock = document.getElementById('vote-clock');
 const voteSeconds = document.getElementById('vote-seconds');
 const voteTimerFill = document.getElementById('vote-timer-fill');
 const voteTitleText = document.getElementById('vote-title-text');
+const voteHint = document.getElementById('vote-hint');
 const voteResultKicker = document.getElementById('vote-result-kicker');
 const voteResultLabel = document.getElementById('vote-result-label');
 const VOTE_RESULT_HOLD_MS = 8000; // Kazanan ekranda bu kadar kalır
@@ -38,6 +43,8 @@ let potionToastTimer = null;
 let voteActive = false;
 let voteTick = null;
 let voteHideTimer = null;
+let configGoldenMultiplier = 3;
+let lastAnimatedPotionNumber = 0;
 
 function delay(ms) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -61,11 +68,54 @@ function setArt(path, restart = false) {
   art.src = restart ? cacheBusted(path) : path;
 }
 
+function renderActiveOutcomes(items = []) {
+  if (!activeOutcomesPanel || !activeOutcomeList) return;
+  activeOutcomeList.replaceChildren();
+  const sorted = Array.isArray(items) ? items : [];
+  if (!sorted.length) {
+    activeOutcomesPanel.classList.remove('visible');
+    activeOutcomesPanel.setAttribute('aria-hidden', 'true');
+    return;
+  }
+
+  if (activeOutcomesTitle) activeOutcomesTitle.textContent = sorted.length > 1 ? 'ACTIVE QUESTS' : 'ACTIVE ' + (sorted[0].type === 'reward' ? 'REWARD' : 'PUNISHMENT');
+  for (const outcome of sorted) {
+    const card = document.createElement('article');
+    card.className = 'active-outcome-card ' + (outcome.type === 'reward' ? 'reward' : 'punishment');
+    card.dataset.id = String(outcome.id);
+
+    const icon = document.createElement('span');
+    icon.className = 'active-outcome-icon';
+    icon.textContent = outcome.type === 'reward' ? '🎁' : '💀';
+
+    const body = document.createElement('div');
+    body.className = 'active-outcome-body';
+    const label = document.createElement('div');
+    label.className = 'active-outcome-label';
+    label.textContent = outcome.label || (outcome.type === 'reward' ? 'Active reward' : 'Active punishment');
+
+    const count = Math.max(1, Number(outcome.remaining) || 1);
+    const unit = outcome.unit === 'game' ? (count === 1 ? 'game' : 'games')
+      : outcome.unit === 'round' ? (count === 1 ? 'round' : 'rounds')
+      : (count === 1 ? 'task' : 'tasks');
+    const remaining = document.createElement('div');
+    remaining.className = 'active-outcome-remaining';
+    remaining.textContent = count + ' ' + unit + ' remaining';
+
+    body.append(label, remaining);
+    card.append(icon, body);
+    activeOutcomeList.appendChild(card);
+  }
+  activeOutcomesPanel.classList.add('visible');
+  activeOutcomesPanel.setAttribute('aria-hidden', 'false');
+}
+
 function renderState(data = {}) {
   lastState = data;
   const progress = Math.max(0, Math.min(100, Number(data.progress) || 0));
   if (progressFill) progressFill.style.width = `${progress}%`;
   if (progressLabel) progressLabel.textContent = `${Math.round(progress)}%`;
+  if (Array.isArray(data.activeOutcomes)) renderActiveOutcomes(data.activeOutcomes);
 
   // Sunucudan gelen Türkçe mesajları İngilizceye çevirerek ekrana basıyoruz
   if (data.twitchConnected) {
@@ -80,6 +130,13 @@ function renderState(data = {}) {
   }
   
   if (stage) stage.classList.toggle('brewing', Boolean(data.brewing));
+
+  // Restore a currently brewing animation if OBS/browser source was refreshed.
+  const potionNumber = Number(data.potionNumber) || 0;
+  if (data.brewing && data.currentOutcome && potionNumber > 0 && potionNumber !== lastAnimatedPotionNumber) {
+    lastAnimatedPotionNumber = potionNumber;
+    queueAnimation(() => playPotionComplete({ outcome: data.currentOutcome, potionNumber, resumed: true }), 'Resume Potion Result');
+  }
 
   // OBS kaynağı oylama sırasında yenilenirse paneli kaldığı yerden göster
   if (data.vote?.open && !voteActive) showVote(data.vote);
@@ -159,7 +216,9 @@ function showVote(snapshot = {}) {
   voteActive = true;
 
   votePanel.classList.remove('finished');
-  if (voteTitleText) voteTitleText.textContent = 'PUNISHMENT VOTE';
+  const voteType = snapshot.type === 'reward' ? 'REWARD' : 'PUNISHMENT';
+  if (voteTitleText) voteTitleText.textContent = voteType + ' VOTE';
+  if (voteHint) voteHint.innerHTML = 'Type <b>1</b> – <b>' + (snapshot.options?.length || 5) + '</b> in chat to vote';
   buildVoteRows(snapshot.options);
   updateVoteCounts(snapshot.votes, snapshot.total);
   startVoteCountdown(snapshot.remainingMs ?? snapshot.durationMs, snapshot.durationMs);
@@ -196,7 +255,7 @@ function finishVote(result = {}) {
 
   if (voteSeconds) voteSeconds.textContent = '0';
   if (voteClock) voteClock.classList.remove('urgent');
-  if (voteTitleText) voteTitleText.textContent = 'VOTING ENDED';
+  if (voteTitleText) voteTitleText.textContent = (result.type === 'reward' ? 'REWARD' : 'PUNISHMENT') + ' VOTE ENDED';
 
   const votesText = `${result.maxVotes} ${result.maxVotes === 1 ? 'VOTE' : 'VOTES'}`;
   let kicker = `WINNER · ${votesText}`;
@@ -236,7 +295,13 @@ async function playThrow(eventData = {}) {
   if (THROW_ASSET) {
     setArt(THROW_ASSET, true);
     showFlyingItem(emoji); // Eşya atma animasyonu
+    if (eventData.golden) {
+      configGoldenMultiplier = Math.max(2, Number(eventData.multiplier) || 3);
+      if (stage) stage.classList.add('golden-throw-active');
+      showResultToast('golden');
+    }
     await delay(Math.max(250, THROW_ANIMATION_MS));
+    if (stage) stage.classList.remove('golden-throw-active');
     setArt(IDLE_ASSET, true);
   } else {
     showFlyingItem(emoji);
@@ -246,10 +311,19 @@ async function playThrow(eventData = {}) {
 
 function showResultToast(outcome) {
   if (!completeToast || !potionMessage) return;
-  
-  // Ödül/Ceza İngilizce metinleri
-  potionMessage.textContent = outcome === 'reward' ? '🎉 REWARD UNLOCKED!' : '💀 PUNISHMENT ACTIVE!';
-  
+
+  completeToast.classList.remove('toast-golden', 'toast-reward', 'toast-punishment');
+  if (outcome === 'golden') {
+    potionMessage.textContent = '✨ GOLDEN THROW x' + (configGoldenMultiplier || 3) + '!';
+    completeToast.classList.add('toast-golden');
+  } else if (outcome === 'reward') {
+    potionMessage.textContent = '🎉 REWARD UNLOCKED!';
+    completeToast.classList.add('toast-reward');
+  } else {
+    potionMessage.textContent = '💀 PUNISHMENT ACTIVE!';
+    completeToast.classList.add('toast-punishment');
+  }
+
   completeToast.classList.add('visible');
   if (potionToastTimer) window.clearTimeout(potionToastTimer);
   
@@ -307,6 +381,24 @@ function resetBrew() {
   setArt(IDLE_ASSET, true);
 }
 
+function spawnConfetti() {
+  if (!confettiLayer) return;
+  const colors = ['#ffd76a', '#d7a7ff', '#8df2bd', '#ff91cb', '#ffffff'];
+  const total = 72;
+  for (let i = 0; i < total; i += 1) {
+    const bit = document.createElement('span');
+    bit.className = 'confetti-bit';
+    bit.style.left = (Math.random() * 100) + 'vw';
+    bit.style.backgroundColor = colors[i % colors.length];
+    bit.style.animationDelay = (Math.random() * 450) + 'ms';
+    bit.style.setProperty('--confetti-drift', ((Math.random() * 240) - 120) + 'px');
+    bit.style.setProperty('--confetti-rotation', ((Math.random() * 1080) - 540) + 'deg');
+    confettiLayer.appendChild(bit);
+    bit.addEventListener('animationend', () => bit.remove(), { once: true });
+    window.setTimeout(() => bit.remove(), 4500);
+  }
+}
+
 async function connectEvents() {
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
@@ -331,8 +423,13 @@ async function connectEvents() {
     catch (error) {}
   });
   events.addEventListener('potionComplete', event => {
-    try { queueAnimation(() => playPotionComplete(JSON.parse(event.data)), 'Potion Result'); }
-    catch (error) {}
+    try {
+      const data = JSON.parse(event.data);
+      const potionNumber = Number(data.potionNumber) || 0;
+      if (potionNumber && potionNumber === lastAnimatedPotionNumber) return;
+      if (potionNumber) lastAnimatedPotionNumber = potionNumber;
+      queueAnimation(() => playPotionComplete(data), 'Potion Result');
+    } catch (error) { console.warn('[Overlay] potionComplete failed:', error); }
   });
   events.addEventListener('brewReset', () => {
     queueAnimation(async () => resetBrew(), 'Reset Cauldron');
@@ -354,6 +451,15 @@ async function connectEvents() {
     catch (error) { console.warn('[Overlay] voteEnd failed:', error); }
   });
   events.addEventListener('voteCancel', hideVote);
+  events.addEventListener('activeOutcomes', event => {
+    try { renderActiveOutcomes(JSON.parse(event.data)); } catch (error) { console.warn('[Overlay] activeOutcomes failed:', error); }
+  });
+  events.addEventListener('outcomeDone', event => {
+    try {
+      const data = JSON.parse(event.data);
+      spawnConfetti();
+    } catch (error) { console.warn('[Overlay] outcomeDone failed:', error); }
+  });
 }
 
 async function runTestAction(endpoint) {

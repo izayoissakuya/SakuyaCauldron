@@ -2,15 +2,15 @@
 
 [English](README.md) · **Türkçe**
 
-Twitch chat'iyle oynanan, OBS'e eklenen hafif bir kazan overlay'i. İzleyiciler `!throw` yazarak kazana emoji atar, kazan %100 olunca chat 30 saniye boyunca bir **ceza oylaması** yapar ve kazanan ceza ekranda gösterilir.
+Twitch chat'iyle oynanan, OBS'e eklenen hafif bir kazan overlay'i. İzleyiciler `!throw` ile kazana emoji atar. Kazan %100 olunca yapılandırılan olasılığa göre **ödül veya ceza oylaması** açılır; kazanan sonuç `!done` ile tamamlanana kadar ekranda kalır.
 
 ## Nasıl çalışır?
 
-1. İzleyici chat'e `!throw` yazar; adı ve emojisi kazana düşer, yüzde artar.
-2. Kazan %100 olunca "POTION BREWED!" olayı çıkar ve **ceza oylaması** başlar.
-3. Chat, `1`–`5` yazarak oy verir (kişi başı tek oy). Overlay'in sağ üstünde canlı oy sayıları ve geri sayım görünür, bot da seçenekleri chat'e yazar.
-4. Süre bitince en çok oy alan ceza ekranda ve chat'te duyurulur. **Eşitlikte** eşit oyu olan seçenekler arasından, **hiç oy yoksa** tüm seçenekler arasından rastgele biri seçilir.
-5. Kazan sıfırlanır, yeni tur başlar.
+1. İzleyici `!throw` yazar; emojisi kazana düşer ve dolum artar. Varsayılan kişisel bekleme 180 saniyedir; iki atış arasında 5 saniyelik ortak bekleme de bulunur.
+2. Kazan %100 olunca yapılandırılan olasılığa göre ödül veya ceza türü seçilir ve o türün 30 saniyelik oylaması başlar.
+3. Chat `1`–`5` yazar; kişi başına tek oy kabul edilir. Eşitlikte eşit oy alanlar arasından, oy yoksa beş seçenek arasından rastgele seçim yapılır.
+4. Seçilen ödül/ceza ekranda kalıcı bir kartta gösterilir; moderatör veya yayıncı `!done` ile tamamlanana kadar kart kaybolmaz. Çok aşamalı sonuçlarda her `!done` kalan sayısını bir azaltır.
+5. Kazan animasyonu ve oylama tamamlanınca kazan sıfırlanır. Yeni turun ödül/ceza kartı, önceki aktif sonuçlardan bağımsız saklanır.
 
 Mimari: Node.js'te tek bir Twitch chat bağlantısı ve yerel bir HTTP sunucusu; overlay olayları Server-Sent Events (SSE) ile alır. Harici yapay zekâ, WebGL veya görüntü işleme yoktur. Sunucu yalnızca `127.0.0.1` adresinde dinler, yerel ağa açılmaz.
 
@@ -77,7 +77,12 @@ Overlay oylama sırasında yenilenirse panel kaldığı yerden devam eder.
 
 | Komut | Ne yapar |
 | --- | --- |
-| `!throw` | Kazana hediye kutusu (🎁) atar. |
+| `!throw` | Kazana hediye kutusu (🎁) atar; %5 ihtimalle altın atış olur ve varsayılan olarak üç kat dolar. |
+| `!done` | Yayıncı/mod aktif ödül veya cezanın bir aşamasını tamamlar. Son aşamada kart kaldırılır ve konfeti oynar. |
+| `!punish <metin>` | Bir ceza önerisini moderatör onayına gönderir. Örn. `!punish Pistol Only | games=1`. |
+| `!reward <metin>` | Bir ödül önerisini moderatör onayına gönderir. |
+| `!approve <id>` / `!reject <id>` | Moderatör, bekleyen öneriyi onaylar veya reddeder. |
+| `!suggestions` | Moderatör bekleyen önerileri listeler. |
 | `!throw dragon`, `!throw pizza` | Kelimeye uyan emojiyi atar (İngilizce anahtar kelimeler). |
 | `!throw kedi`, `!throw cadı` | Türkçe kısayollar: kedi, köpek, fare, hayalet, balkabağı, yarasa, örümcek, cadı, hediye, pizza, kalp, ejderha, kurukafa. |
 | `!throw 🎃` | Doğrudan yazılan emojiyi atar. |
@@ -91,13 +96,15 @@ Sunucu, ekrana düşecek emojiyi engelli listeyle karşılaştırır; engelliyse
 
 ### Bekleme süreleri ve uyarılar
 
-- Aynı kişi iki `!throw` arasında `THROW_COOLDOWN_SECONDS` (varsayılan 120 sn) beklemelidir.
+- Aynı kişi iki `!throw` arasında `THROW_COOLDOWN_SECONDS` (varsayılan 180 sn) beklemelidir.
 - Herhangi iki atış arasında `GLOBAL_COOLDOWN_SECONDS` (varsayılan 5 sn) ortak bekleme vardır.
 - Bot, kişisel beklemeye takılana kalan süreyi chat'e yazar ("you can throw again in 1m 55s"). Chat dolmasın diye aynı kişiye en çok 30 saniyede bir, tüm kanala en çok 3 saniyede bir yazar; ortak beklemede hiç yazmaz. `COOLDOWN_NOTICES=false` ile uyarıları tamamen kapatabilirsin.
 
-## 6. Ceza listesi
+## 6. Ödül ve ceza listeleri
 
-Oylamadaki 5 ceza `server.js` içindeki `PUNISHMENTS` listesindedir. Metinleri değiştirebilirsin; seçenek sayısını 5'ten farklı yaparsan chat'teki "1–5" mesajını ve oy kontrolünü de güncellemen gerekir.
+Varsayılan seçenekler `server.js` içindeki `DEFAULT_PUNISHMENTS` ve `DEFAULT_REWARDS` listelerindedir. Her turda yalnızca seçilen türe ait beş seçenek oylanır. Moderatörün onayladığı topluluk önerileri bu havuza eklenir; havuz beşten büyük olduğunda her oylama için beş seçenek rastgele sunulur.
+
+Ödüller/cezalar oyunla otomatik entegre değildir; örneğin yayıncı ödülü veya cezayı uyguladıktan sonra `!done` yazar. `games=3`, `rounds=2` veya `tasks=4` eki aktif kartta kalan miktarı belirler. `!done` her kullanımda bir azaltır; sonuncuda kartı kaldırıp konfeti oynatır.
 
 ## 7. `.env` ayarları
 
@@ -107,11 +114,15 @@ Oylamadaki 5 ceza `server.js` içindeki `PUNISHMENTS` listesindedir. Metinleri d
 | `TWITCH_CHANNEL` | – | Yayın yaptığın kanalın kullanıcı adı. |
 | `PORT` | `3131` | Yerel sunucu portu. Değiştirirsen OAuth Redirect URL'yi de değiştir. |
 | `FILL_PER_THROW` | `10` | Her geçerli `!throw` yüzdeyi kaç artırır (10 = 10 atışta dolar). |
-| `BREW_RESET_MS` | `4500` | Kazan dolduktan sonra sıfırlanma gecikmesi (ms). |
-| `THROW_COOLDOWN_SECONDS` | `120` | Aynı kişinin iki atışı arası bekleme. |
+
+| `THROW_COOLDOWN_SECONDS` | `180` | Aynı kişinin iki atışı arası bekleme (3 dakika). |
 | `GLOBAL_COOLDOWN_SECONDS` | `5` | Herhangi iki atış arası ortak bekleme. |
 | `COOLDOWN_NOTICES` | `true` | Botun bekleme uyarılarını yazması. |
-| `VOTE_SECONDS` | `30` | Oylama süresi (5–300 sn). |
+| `VOTE_SECONDS` | `30` | Ödül veya ceza oylama süresi (5–300 sn). |
+| `REWARD_CHANCE` | `50` | Kazan dolunca ödül türünün seçilme olasılığı (%). Kalan olasılık ceza olur. |
+| `GOLDEN_THROW_CHANCE` | `5` | Altın atış ihtimali (%). |
+| `GOLDEN_THROW_MULTIPLIER` | `3` | Altın atış dolum çarpanı. |
+| `CAULDRON_COOLING_PER_MINUTE` | `1` | Tur boşta ilerlerken dakikada eksilen yüzde; `0` kapatır. |
 | `BLOCKED_EMOJIS` | boş | Varsayılana ek engelli emojiler. |
 
 Not: Eski sürümlerdeki `USER_COOLDOWN_SECONDS` ve `HOST` satırları artık kullanılmaz; silebilirsin.
@@ -123,13 +134,17 @@ Not: Eski sürümlerdeki `USER_COOLDOWN_SECONDS` ve `HOST` satırları artık ku
 - `public/style.css`: Şeffaf overlay, kazan ve oylama paneli stilleri, animasyonlar.
 - `public/app.js`: Sunucudan olayları alıp emojileri düşürür, yüzdeyi ve oylama panelini günceller.
 - `public/assets/`: Kazan GIF'leri (`cauldron-idle`, `cauldron-add`, `reward`, `punishment`).
+- `community-data.json`: Onaylı topluluk ödülleri/cezaları, bekleyen öneriler ve tamamlanmayı bekleyen aktif sonuçlar; yalnızca yerelde saklanır.
 - `.env`: Yerel gizli bilgiler ve ayarlar (depoya eklenmez).
 - `tokens.json`: OAuth tokenları (depoya eklenmez).
 
-## Bilinen eksikler / yapılacaklar
+## Davranış notları
 
-- **Ödül/ceza ayrımı henüz yok.** Kazan dolunca overlay şu an her zaman "reward" GIF'ini ve "REWARD UNLOCKED!" yazısını oynatır, ardından oylama sonucu ceza olarak duyurulur. `punishment.gif` henüz kullanılmıyor.
-- Overlay, kazan animasyonu bitince `/api/animation/complete` adresine istek atar; sunucuda bu adres henüz yok (404 döner, zararsızdır, yalnızca tarayıcı konsolunda uyarı görünür).
+- Ödül/ceza türü `REWARD_CHANCE` ile seçilir; varsayılan %50 ödül, %50 ceza. Her iki tür de kendi beşli aday listesini aynı oylama mekanizmasıyla kullanır.
+- Aktif ödül ve cezalar `!done` ile tamamlanır. `games=3`, `rounds=2` veya `tasks=4` gibi öneri ekleri, kartta kalan miktarı gösterir.
+- Animasyon tamamlanması `/api/animation/complete` ile sunucuya bildirilir. Kazan, animasyon ve oylama da tamamlandığında sıfırlanır.
+- Altın atış ve dakikalık soğuma yapılandırılabilir; soğuma aktif tur/oylama sırasında durur.
+- Kullanıcı önerileri yalnızca moderatör onayından sonra oylama havuzuna girer.
 
 ## Güvenlik notu
 

@@ -264,3 +264,139 @@ body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #fff; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* --- PERSISTENT ACTIVE REWARD / PUNISHMENT CARDS --- */
+.active-outcomes {
+  position: absolute;
+  z-index: 30;
+  left: clamp(18px, 2.8vw, 52px);
+  top: clamp(18px, 3vh, 44px);
+  width: clamp(250px, 24vw, 420px);
+  display: grid;
+  gap: 9px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-20px);
+  transition: opacity .3s ease, transform .3s ease, visibility 0s linear .3s;
+  pointer-events: none;
+}
+.active-outcomes.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity .3s ease, transform .3s ease, visibility 0s;
+}
+.active-outcomes-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #f1d5ff;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: .16em;
+  text-shadow: 0 0 12px rgba(170, 115, 255, .8);
+}
+.active-outcomes-header > span:first-child { color: #ffdf83; font-size: 18px; }
+.active-outcome-list { display: grid; gap: 8px; }
+.active-outcome-card {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 13px;
+  border: 1px solid rgba(229, 200, 255, .58);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(31, 18, 46, .97), rgba(12, 8, 24, .94));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .3), inset 0 0 18px rgba(170, 115, 255, .08);
+}
+.active-outcome-card.reward {
+  border-color: rgba(255, 216, 117, .8);
+  box-shadow: 0 0 22px rgba(255, 193, 70, .13), inset 0 0 18px rgba(255, 216, 117, .08);
+}
+.active-outcome-card.punishment {
+  border-color: rgba(255, 132, 160, .62);
+}
+.active-outcome-icon {
+  display: grid;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  background: rgba(170, 115, 255, .16);
+  font-size: 21px;
+}
+.active-outcome-card.reward .active-outcome-icon { background: rgba(255, 209, 91, .14); }
+.active-outcome-body { min-width: 0; display: grid; gap: 4px; }
+.active-outcome-label { color: #fff; font-size: 14px; line-height: 1.25; font-weight: 850; overflow-wrap: anywhere; text-shadow: 0 1px 5px #000; }
+.active-outcome-remaining { color: #d9c7ec; font-size: 11px; font-weight: 750; letter-spacing: .04em; }
+.active-outcome-card.reward .active-outcome-remaining { color: #ffe39a; }
+.active-outcomes-footer {
+  color: rgba(237, 224, 250, .77);
+  font-size: 10px;
+  font-weight: 700;
+  text-shadow: 0 1px 5px #000;
+}
+.active-outcomes-footer b { color: #e6d4ff; }
+
+/* --- GOLDEN THROW FLASH --- */
+.cauldron-widget.golden-throw-active {
+  filter: drop-shadow(0 0 18px rgba(255, 211, 94, .85));
+  animation: golden-pulse .38s ease-in-out infinite alternate;
+}
+.cauldron-widget.golden-throw-active::after {
+  content: "";
+  position: absolute;
+  inset: 3%;
+  z-index: 4;
+  pointer-events: none;
+  border: 2px solid rgba(255, 225, 132, .65);
+  border-radius: 45%;
+  box-shadow: 0 0 24px rgba(255, 202, 70, .6), inset 0 0 25px rgba(255, 202, 70, .22);
+  animation: golden-ring .8s ease-out infinite;
+}
+.potion-result.toast-golden {
+  border-color: rgba(255, 224, 125, .98);
+  color: #fff2bd;
+  background: rgba(49, 32, 8, .95);
+  box-shadow: 0 0 30px rgba(255, 200, 59, .65);
+}
+.potion-result.toast-reward { border-color: rgba(255, 224, 125, .9); }
+.potion-result.toast-punishment { border-color: rgba(255, 132, 160, .8); }
+
+/* --- COMPLETION CONFETTI --- */
+.confetti-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  overflow: hidden;
+  pointer-events: none;
+}
+.confetti-bit {
+  position: absolute;
+  top: -20px;
+  width: 7px;
+  height: 13px;
+  border-radius: 2px;
+  opacity: .95;
+  animation: confetti-fall 3.4s cubic-bezier(.2, .7, .4, 1) forwards;
+}
+@keyframes confetti-fall {
+  0% { transform: translate3d(0, -5vh, 0) rotate(0deg); opacity: 0; }
+  10% { opacity: 1; }
+  100% { transform: translate3d(var(--confetti-drift, 0px), 110vh, 0) rotate(var(--confetti-rotation, 360deg)); opacity: 0; }
+}
+@keyframes golden-pulse {
+  from { filter: drop-shadow(0 0 12px rgba(255, 211, 94, .55)); }
+  to { filter: drop-shadow(0 0 30px rgba(255, 236, 160, 1)); }
+}
+@keyframes golden-ring {
+  0% { opacity: .2; transform: scale(.92); }
+  70% { opacity: .8; transform: scale(1.03); }
+  100% { opacity: 0; transform: scale(1.08); }
+}
+@media (max-width: 700px) {
+  .active-outcomes { width: min(75vw, 350px); }
+  .active-outcome-label { font-size: 12px; }
+}
+
+.test-mode .active-outcomes { top: 270px; }

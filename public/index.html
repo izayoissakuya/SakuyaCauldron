@@ -29,6 +29,15 @@
       <div id="status-chip" class="status-chip" style="z-index: 6;">Waiting for chat...</div>
     </section>
 
+    <!-- Active rewards and punishments persist until a moderator/streamer uses !done. -->
+    <section id="active-outcomes" class="active-outcomes" aria-live="polite" aria-label="Active rewards and punishments" aria-hidden="true">
+      <header class="active-outcomes-header"><span>✦</span><span id="active-outcomes-title">ACTIVE QUESTS</span></header>
+      <div id="active-outcome-list" class="active-outcome-list"></div>
+      <footer class="active-outcomes-footer">Streamer or moderator: <b>!done</b></footer>
+    </section>
+
+    <div id="confetti-layer" class="confetti-layer" aria-hidden="true"></div>
+
     <!-- Ceza oylaması paneli: sunucudan gelen voteStart/voteUpdate/voteEnd olaylarıyla çalışır -->
     <section id="vote-panel" class="vote-panel" aria-live="polite" aria-hidden="true">
       <header class="vote-head">
