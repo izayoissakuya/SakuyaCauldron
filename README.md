@@ -112,7 +112,7 @@ The five punishments live in the `PUNISHMENTS` list in `server.js`. You can chan
 | `TWITCH_CHANNEL` | – | Channel you stream on. |
 | `PORT` | `3131` | Local server port. If you change it, change the OAuth Redirect URL too. |
 | `FILL_PER_THROW` | `10` | How much each valid `!throw` adds (10 = full after 10 throws). |
-| `BREW_RESET_MS` | `4500` | Delay before the cauldron resets after filling (ms). |
+
 | `THROW_COOLDOWN_SECONDS` | `180` | Wait between one person's throws (3 minutes). |
 | `GLOBAL_COOLDOWN_SECONDS` | `5` | Shared wait between any two throws. |
 | `COOLDOWN_NOTICES` | `true` | Whether the bot posts cooldown notices. |
