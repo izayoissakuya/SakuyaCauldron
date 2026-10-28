@@ -1093,9 +1093,14 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, 200, { accepted: true, voting: isVotingOpen });
   }
   if (req.method === 'POST' && pathname === '/api/test/vote') {
-    // Test modunda sahte bir izleyici adına oy ver; ?option=1..5 (verilmezse rastgele)
+    // Test modunda sahte izleyici için oy ver; yalnızca oylama açıkken kullanılabilir.
+    if (!isVotingOpen || !currentVoteOptions.length) {
+      return sendJson(res, 409, { accepted: false, voting: false });
+    }
     const requested = Number.parseInt(requestUrl.searchParams.get('option'), 10);
-    const option = OPTION_IDS.includes(requested) ? requested : OPTION_IDS[crypto.randomInt(OPTION_IDS.length)];
+    const option = Number.isInteger(requested) && requested >= 1 && requested <= currentVoteOptions.length
+      ? requested
+      : crypto.randomInt(currentVoteOptions.length) + 1;
     testVoterNumber += 1;
     const accepted = castVote(`testvoter${testVoterNumber}`, option);
     return sendJson(res, accepted ? 200 : 409, { accepted, option, voting: isVotingOpen });
