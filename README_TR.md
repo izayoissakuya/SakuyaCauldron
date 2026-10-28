@@ -112,7 +112,7 @@ Oylamadaki 5 ceza `server.js` içindeki `PUNISHMENTS` listesindedir. Metinleri d
 | `TWITCH_CHANNEL` | – | Yayın yaptığın kanalın kullanıcı adı. |
 | `PORT` | `3131` | Yerel sunucu portu. Değiştirirsen OAuth Redirect URL'yi de değiştir. |
 | `FILL_PER_THROW` | `10` | Her geçerli `!throw` yüzdeyi kaç artırır (10 = 10 atışta dolar). |
-| `BREW_RESET_MS` | `4500` | Kazan dolduktan sonra sıfırlanma gecikmesi (ms). |
+
 | `THROW_COOLDOWN_SECONDS` | `180` | Aynı kişinin iki atışı arası bekleme (3 dakika). |
 | `GLOBAL_COOLDOWN_SECONDS` | `5` | Herhangi iki atış arası ortak bekleme. |
 | `COOLDOWN_NOTICES` | `true` | Botun bekleme uyarılarını yazması. |
