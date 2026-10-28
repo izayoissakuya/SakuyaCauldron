@@ -100,9 +100,11 @@ Sunucu, ekrana düşecek emojiyi engelli listeyle karşılaştırır; engelliyse
 - Herhangi iki atış arasında `GLOBAL_COOLDOWN_SECONDS` (varsayılan 5 sn) ortak bekleme vardır.
 - Bot, kişisel beklemeye takılana kalan süreyi chat'e yazar ("you can throw again in 1m 55s"). Chat dolmasın diye aynı kişiye en çok 30 saniyede bir, tüm kanala en çok 3 saniyede bir yazar; ortak beklemede hiç yazmaz. `COOLDOWN_NOTICES=false` ile uyarıları tamamen kapatabilirsin.
 
-## 6. Ceza listesi
+## 6. Ödül ve ceza listeleri
 
-Oylamadaki 5 ceza `server.js` içindeki `PUNISHMENTS` listesindedir. Metinleri değiştirebilirsin; seçenek sayısını 5'ten farklı yaparsan chat'teki "1–5" mesajını ve oy kontrolünü de güncellemen gerekir.
+Varsayılan seçenekler `server.js` içindeki `DEFAULT_PUNISHMENTS` ve `DEFAULT_REWARDS` listelerindedir. Her turda yalnızca seçilen türe ait beş seçenek oylanır. Moderatörün onayladığı topluluk önerileri bu havuza eklenir; havuz beşten büyük olduğunda her oylama için beş seçenek rastgele sunulur.
+
+Ödüller/cezalar oyunla otomatik entegre değildir; örneğin yayıncı ödülü veya cezayı uyguladıktan sonra `!done` yazar. `games=3`, `rounds=2` veya `tasks=4` eki aktif kartta kalan miktarı belirler. `!done` her kullanımda bir azaltır; sonuncuda kartı kaldırıp konfeti oynatır.
 
 ## 7. `.env` ayarları
 
