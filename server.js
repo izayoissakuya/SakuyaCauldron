@@ -14,6 +14,7 @@ const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const ENV_PATH = path.join(ROOT, '.env');
 const TOKEN_PATH = path.join(ROOT, 'tokens.json');
+const COMMUNITY_PATH = path.join(ROOT, 'community-data.json');
 
 function loadEnvFile() {
   if (!fs.existsSync(ENV_PATH)) return;
@@ -41,9 +42,13 @@ const config = {
   port: clampInt(process.env.PORT, 3131, 1, 65535),
   fillPerThrow: clampInt(process.env.FILL_PER_THROW, 10, 1, 100),
   // Aynı kişinin iki !throw arası bekleme süresi (eskiden koda gömülü 120 sn idi)
-  userCooldownMs: clampInt(process.env.THROW_COOLDOWN_SECONDS, 120, 0, 3600) * 1000,
+  userCooldownMs: clampInt(process.env.THROW_COOLDOWN_SECONDS, 180, 0, 3600) * 1000,
   // Herhangi iki !throw arası ortak bekleme (eskiden koda gömülü 5 sn idi)
   globalCooldownMs: clampInt(process.env.GLOBAL_COOLDOWN_SECONDS, 5, 0, 600) * 1000,
+  goldenChance: clampInt(process.env.GOLDEN_THROW_CHANCE, 5, 0, 100),
+  goldenMultiplier: clampInt(process.env.GOLDEN_THROW_MULTIPLIER, 3, 2, 10),
+  rewardChance: clampInt(process.env.REWARD_CHANCE, 50, 0, 100),
+  coolingPerMinute: clampInt(process.env.CAULDRON_COOLING_PER_MINUTE, 1, 0, 100),
   // Bot "şu kadar bekle" uyarısını chat'e yazsın mı
   cooldownNotices: !/^(0|false|off|no)$/i.test((process.env.COOLDOWN_NOTICES || '').trim()),
   brewResetMs: clampInt(process.env.BREW_RESET_MS, 4500, 1000, 60000),
@@ -192,6 +197,7 @@ const state = {
   brewing: false,
   potionNumber: 0,
   lastThrower: '',
+  currentOutcome: null,
   twitchConnected: false,
   twitchLogin: '',
   statusMessage: 'Twitch baglantisi bekleniyor',
@@ -205,40 +211,118 @@ let testVoterNumber = 0;
 let brewResetTimer = null;
 let lastGlobalThrow = 0;
 // ---------------------------------------------------------------------------
-// Ceza oylaması
+// Reward/punishment votes, persistent active outcomes, and moderated community
+// suggestions. The current outcome type is chosen when the cauldron reaches 100%.
 // ---------------------------------------------------------------------------
-const PUNISHMENTS = [
-  '20 Push-ups',
-  'Eat a Lemon',
-  'Pistol Only for 1 game',
-  'Play without skill 1 game',
-  'VIP a Random Chatter',
+const DEFAULT_PUNISHMENTS = [
+  { label: '20 Push-ups', remaining: 1, unit: 'task' },
+  { label: 'Eat a Lemon', remaining: 1, unit: 'task' },
+  { label: 'Pistol Only for 1 game', remaining: 1, unit: 'game' },
+  { label: 'Play without skill 1 game', remaining: 1, unit: 'game' },
+  { label: 'VIP a Random Chatter', remaining: 1, unit: 'task' },
 ];
-const OPTION_IDS = PUNISHMENTS.map((_, index) => index + 1);
+const DEFAULT_REWARDS = [
+  { label: 'Skip the next punishment', remaining: 1, unit: 'task' },
+  { label: 'Choose the next game mode', remaining: 1, unit: 'task' },
+  { label: 'Shout-out a chatter', remaining: 1, unit: 'task' },
+  { label: 'Choose the next cauldron emoji', remaining: 1, unit: 'task' },
+  { label: 'One bonus round with no punishment', remaining: 1, unit: 'round' },
+];
 const KEYCAPS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
-// Chat mesajlarında kullanılan etiketler (eski metinle birebir aynı).
-const punishmentOptions = PUNISHMENTS.map((text, index) => `${KEYCAPS[index]} ${text}`);
+const VOTE_OPTION_COUNT = 5;
+
+function makeCommunityDefaults() {
+  return {
+    nextSuggestionId: 1,
+    nextOutcomeId: 1,
+    pendingSuggestions: [],
+    approved: { punishment: [], reward: [] },
+    activeOutcomes: [],
+  };
+}
+
+function loadCommunityData() {
+  const defaults = makeCommunityDefaults();
+  try {
+    if (!fs.existsSync(COMMUNITY_PATH)) return defaults;
+    const parsed = JSON.parse(fs.readFileSync(COMMUNITY_PATH, 'utf8'));
+    return {
+      ...defaults,
+      ...parsed,
+      pendingSuggestions: Array.isArray(parsed.pendingSuggestions) ? parsed.pendingSuggestions : [],
+      approved: {
+        punishment: Array.isArray(parsed.approved && parsed.approved.punishment) ? parsed.approved.punishment : [],
+        reward: Array.isArray(parsed.approved && parsed.approved.reward) ? parsed.approved.reward : [],
+      },
+      activeOutcomes: Array.isArray(parsed.activeOutcomes) ? parsed.activeOutcomes : [],
+    };
+  } catch (error) {
+    console.warn('[COMMUNITY] community-data.json could not be read; defaults loaded:', error.message);
+    return defaults;
+  }
+}
+
+let communityData = loadCommunityData();
+
+function persistCommunityData() {
+  try {
+    const tempPath = COMMUNITY_PATH + '.tmp';
+    fs.writeFileSync(tempPath, JSON.stringify(communityData, null, 2), 'utf8');
+    fs.renameSync(tempPath, COMMUNITY_PATH);
+  } catch (error) {
+    console.error('[COMMUNITY] Could not save data:', error.message);
+  }
+}
 
 let isVotingOpen = false;
-let votes = emptyVotes();
+let currentVoteType = 'punishment';
+let currentVoteOptions = [];
+let votes = {};
 let votedUsers = new Set();
 let voteEndsAt = 0;
 let voteTimer = null;
 let voteBroadcastTimer = null;
+let animationComplete = false;
+let voteComplete = false;
+let animationFailsafeTimer = null;
 
-function emptyVotes() {
-  return Object.fromEntries(OPTION_IDS.map(id => [id, 0]));
+function cleanSuggestionLabel(input) {
+  return String(input || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+function itemDefaults(type) {
+  return type === 'reward' ? DEFAULT_REWARDS : DEFAULT_PUNISHMENTS;
+}
+
+function availableCatalog(type) {
+  const custom = communityData.approved[type] || [];
+  const combined = [...itemDefaults(type), ...custom];
+  if (combined.length <= VOTE_OPTION_COUNT) return combined;
+  const shuffled = [...combined];
+  for (let i = shuffled.length - 1; i > 0; i -= 1) {
+    const j = crypto.randomInt(i + 1);
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, VOTE_OPTION_COUNT);
+}
+
+function emptyVotes(options = currentVoteOptions) {
+  return Object.fromEntries(options.map((_, index) => [index + 1, 0]));
 }
 
 function totalVotes() {
-  return OPTION_IDS.reduce((sum, id) => sum + votes[id], 0);
+  return Object.values(votes).reduce((sum, count) => sum + count, 0);
 }
 
-// Overlay'in oylama panelini çizmek için ihtiyaç duyduğu her şey.
 function voteSnapshot() {
   return {
     open: isVotingOpen,
-    options: PUNISHMENTS.map((label, index) => ({ id: index + 1, label })),
+    type: currentVoteType,
+    options: currentVoteOptions.map((item, index) => ({ id: index + 1, label: item.label })),
     votes: { ...votes },
     total: totalVotes(),
     durationMs: config.voteMs,
@@ -250,14 +334,13 @@ function chatSay(message) {
   if (!twitchClient) return;
   try {
     Promise.resolve(twitchClient.say(config.channel, message)).catch(error => {
-      console.warn('[Twitch] Mesaj gonderilemedi:', error?.message || error);
+      console.warn('[Twitch] Message could not be sent:', error && (error.message || error));
     });
   } catch (error) {
-    console.warn('[Twitch] Mesaj gonderilemedi:', error?.message || error);
+    console.warn('[Twitch] Message could not be sent:', error && (error.message || error));
   }
 }
 
-// Oy yağdığında her oyda yayın yapmamak için en fazla 5 kez/sn güncelle.
 function scheduleVoteBroadcast() {
   if (voteBroadcastTimer) return;
   voteBroadcastTimer = setTimeout(() => {
@@ -268,7 +351,7 @@ function scheduleVoteBroadcast() {
 
 function castVote(userKey, option) {
   const optionId = Number(option);
-  if (!isVotingOpen || !OPTION_IDS.includes(optionId)) return false;
+  if (!isVotingOpen || !Number.isInteger(optionId) || optionId < 1 || optionId > currentVoteOptions.length) return false;
   if (!userKey || votedUsers.has(userKey)) return false;
   votes[optionId] += 1;
   votedUsers.add(userKey);
@@ -276,11 +359,10 @@ function castVote(userKey, option) {
   return true;
 }
 
-// En çok oyu alanı seçer. Eşitlikte eşit oylu seçenekler arasından,
-// hiç oy yoksa tüm seçenekler arasından rastgele seçer.
 function pickVoteWinner() {
-  const maxVotes = Math.max(...OPTION_IDS.map(id => votes[id]));
-  const candidates = OPTION_IDS.filter(id => votes[id] === maxVotes);
+  const optionIds = currentVoteOptions.map((_, index) => index + 1);
+  const maxVotes = Math.max(...optionIds.map(id => votes[id] || 0));
+  const candidates = optionIds.filter(id => (votes[id] || 0) === maxVotes);
   const mode = maxVotes === 0 ? 'no-votes' : candidates.length > 1 ? 'tie' : 'clear';
   const winner = candidates[crypto.randomInt(candidates.length)];
   return { winner, maxVotes, candidates, mode };
@@ -293,59 +375,212 @@ function clearVoteTimers() {
   voteBroadcastTimer = null;
 }
 
-function startPunishmentVote() {
+function startOutcomeVote(type) {
   if (isVotingOpen) return;
-
-  isVotingOpen = true;
-  votes = emptyVotes();
+  currentVoteType = type === 'reward' ? 'reward' : 'punishment';
+  currentVoteOptions = availableCatalog(currentVoteType);
+  votes = emptyVotes(currentVoteOptions);
   votedUsers.clear();
+  isVotingOpen = true;
   voteEndsAt = Date.now() + config.voteMs;
 
   const seconds = Math.round(config.voteMs / 1000);
-  const optionsText = punishmentOptions.join(' | ');
-  chatSay(`💀 PUNISHMENT TIME! You have ${seconds} seconds to vote by typing a number from 1 to 5 in chat! Options: ${optionsText}`);
+  const title = currentVoteType === 'reward' ? '🎁 REWARD TIME!' : '💀 PUNISHMENT TIME!';
+  const optionsText = currentVoteOptions.map((item, index) => KEYCAPS[index] + ' ' + item.label).join(' | ');
+  chatSay(title + ' You have ' + seconds + ' seconds to vote by typing a number from 1 to ' + currentVoteOptions.length + ' in chat! Options: ' + optionsText);
   broadcast('voteStart', voteSnapshot());
-  console.log(`[VOTE] Oylama basladi (${seconds} sn).`);
+  console.log('[VOTE] ' + currentVoteType + ' vote started (' + seconds + 's).');
 
   clearVoteTimers();
-  voteTimer = setTimeout(endPunishmentVote, config.voteMs);
+  voteTimer = setTimeout(endOutcomeVote, config.voteMs);
 }
 
-function endPunishmentVote() {
+function activeOutcomeSnapshot() {
+  return [...communityData.activeOutcomes].sort((a, b) => a.createdAt - b.createdAt);
+}
+
+function broadcastActiveOutcomes() {
+  broadcast('activeOutcomes', activeOutcomeSnapshot());
+  broadcastState();
+}
+
+function finishBrewIfReady() {
+  if (!state.brewing || !animationComplete || !voteComplete) return;
+  if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
+  animationFailsafeTimer = null;
+  state.progress = 0;
+  state.throwCount = 0;
+  state.brewing = false;
+  state.currentOutcome = null;
+  state.lastThrower = '';
+  broadcastState();
+  broadcast('brewReset', { potionNumber: state.potionNumber });
+  console.log('[CAULDRON] Animation and vote complete; cauldron reset.');
+}
+
+function endOutcomeVote() {
   if (!isVotingOpen) return;
   isVotingOpen = false;
   clearVoteTimers();
 
-  const { winner, maxVotes, candidates, mode } = pickVoteWinner();
-  const winningPunishment = punishmentOptions[winner - 1];
+  const result = pickVoteWinner();
+  const selected = currentVoteOptions[result.winner - 1];
+  const type = currentVoteType;
+  const outcome = {
+    id: communityData.nextOutcomeId++,
+    type,
+    label: selected.label,
+    remaining: Math.max(1, Number(selected.remaining) || 1),
+    unit: selected.unit || (/\bgame\b/i.test(selected.label) ? 'game' : 'task'),
+    createdAt: Date.now(),
+  };
+  communityData.activeOutcomes.push(outcome);
+  persistCommunityData();
+  broadcastActiveOutcomes();
 
-  if (mode === 'clear') {
-    chatSay(`🔔 VOTING ENDED! The winning punishment with ${maxVotes} votes is: ${winningPunishment}`);
-  } else if (mode === 'tie') {
-    const tied = candidates.map(id => `#${id}`).join(', ');
-    chatSay(`🔔 VOTING ENDED! It's a tie between ${tied} with ${maxVotes} votes each, so one was picked at random: ${winningPunishment}`);
+  const kind = type === 'reward' ? 'REWARD' : 'PUNISHMENT';
+  if (result.mode === 'clear') {
+    chatSay('🔔 ' + kind + ' VOTE ENDED! Winner (' + result.maxVotes + ' votes): ' + selected.label + '. Mods/streamer: type !done when completed.');
+  } else if (result.mode === 'tie') {
+    const tied = result.candidates.map(id => '#' + id).join(', ');
+    chatSay('🔔 ' + kind + ' VOTE TIED between ' + tied + '; picked at random: ' + selected.label + '.');
   } else {
-    chatSay(`🔔 VOTING ENDED! Nobody voted, so a punishment was picked at random: ${winningPunishment}`);
+    chatSay('🔔 No votes received; selected at random: ' + selected.label + '.');
   }
 
   broadcast('voteEnd', {
-    winner,
-    label: PUNISHMENTS[winner - 1],
-    maxVotes,
-    candidates,
-    mode,
+    type,
+    winner: result.winner,
+    label: selected.label,
+    maxVotes: result.maxVotes,
+    candidates: result.candidates,
+    mode: result.mode,
     votes: { ...votes },
     total: totalVotes(),
+    activeOutcome: outcome,
   });
-  console.log(`[VOTE] Bitti: #${winner} ${PUNISHMENTS[winner - 1]} (${mode}, ${maxVotes} oy).`);
+  console.log('[VOTE] Ended: ' + type + ' #' + result.winner + ' ' + selected.label + ' (' + result.mode + ', ' + result.maxVotes + ' votes).');
+  voteComplete = true;
+  finishBrewIfReady();
 }
 
-function cancelPunishmentVote() {
+function cancelOutcomeVote() {
   if (!isVotingOpen) return;
   isVotingOpen = false;
   clearVoteTimers();
   broadcast('voteCancel', {});
-  console.log('[VOTE] Oylama iptal edildi.');
+  console.log('[VOTE] Vote cancelled.');
+}
+
+function isModOrBroadcaster(tags, username) {
+  const login = String((tags && tags.username) || username || '').toLowerCase();
+  return Boolean((tags && tags.mod) || (tags && tags.badges && tags.badges.broadcaster) || login === config.channel);
+}
+
+function parseSuggestionPayload(payload) {
+  const parts = String(payload || '').split('|');
+  const label = cleanSuggestionLabel(parts[0]);
+  let remaining = 1;
+  let unit = /\bgame\b/i.test(label) ? 'game' : 'task';
+  for (const option of parts.slice(1)) {
+    const match = option.trim().match(/^(games?|tasks?|rounds?)\s*=\s*(\d{1,2})$/i);
+    if (!match) continue;
+    remaining = Math.min(99, Math.max(1, Number(match[2])));
+    const raw = match[1].toLowerCase();
+    unit = raw.startsWith('game') ? 'game' : raw.startsWith('round') ? 'round' : 'task';
+  }
+  return { label, remaining, unit };
+}
+
+function submitCommunitySuggestion(type, payload, username) {
+  const item = parseSuggestionPayload(payload);
+  if (item.label.length < 3) {
+    chatSay('@' + username + ', please provide a suggestion of at least 3 characters.');
+    return;
+  }
+  if (communityData.pendingSuggestions.length >= 50) {
+    chatSay('@' + username + ', the suggestion queue is full for now.');
+    return;
+  }
+  const normalized = item.label.toLocaleLowerCase('en');
+  const allItems = [
+    ...communityData.pendingSuggestions,
+    ...communityData.approved.punishment,
+    ...communityData.approved.reward,
+  ];
+  const exists = allItems.some(entry => String(entry.label || entry).toLocaleLowerCase('en') === normalized);
+  if (exists) {
+    chatSay('@' + username + ', that suggestion is already pending or approved.');
+    return;
+  }
+  const suggestion = {
+    id: communityData.nextSuggestionId++,
+    type,
+    label: item.label,
+    remaining: item.remaining,
+    unit: item.unit,
+    submittedBy: String(username || 'viewer').slice(0, 32),
+    createdAt: Date.now(),
+  };
+  communityData.pendingSuggestions.push(suggestion);
+  persistCommunityData();
+  chatSay('💡 @' + username + ', suggestion #' + suggestion.id + ' submitted for moderator review (' + type + ').');
+  broadcast('suggestionsUpdate', { pendingCount: communityData.pendingSuggestions.length });
+}
+
+function moderateSuggestion(action, id, username) {
+  const index = communityData.pendingSuggestions.findIndex(item => item.id === Number(id));
+  if (index < 0) {
+    chatSay('@' + username + ', suggestion #' + id + ' was not found.');
+    return;
+  }
+  const suggestion = communityData.pendingSuggestions[index];
+  communityData.pendingSuggestions.splice(index, 1);
+  if (action === 'approve') {
+    communityData.approved[suggestion.type].push({
+      label: suggestion.label,
+      remaining: suggestion.remaining,
+      unit: suggestion.unit,
+    });
+    chatSay('✅ @' + username + ' approved ' + suggestion.type + ' suggestion #' + suggestion.id + ': ' + suggestion.label);
+  } else {
+    chatSay('🗑️ @' + username + ' rejected suggestion #' + suggestion.id + '.');
+  }
+  persistCommunityData();
+  broadcast('suggestionsUpdate', { pendingCount: communityData.pendingSuggestions.length });
+}
+
+function reportPendingSuggestions(username) {
+  if (!communityData.pendingSuggestions.length) {
+    chatSay('@' + username + ', there are no pending suggestions.');
+    return;
+  }
+  const lines = communityData.pendingSuggestions.slice(0, 4)
+    .map(item => '#' + item.id + ' [' + item.type + '] ' + item.label);
+  const more = communityData.pendingSuggestions.length > 4 ? ' (+' + (communityData.pendingSuggestions.length - 4) + ' more)' : '';
+  chatSay('Pending suggestions: ' + lines.join(' | ') + more);
+}
+
+function completeActiveOutcome(username) {
+  const active = activeOutcomeSnapshot()[0];
+  if (!active) {
+    chatSay('@' + username + ', there is no active reward or punishment to complete.');
+    return;
+  }
+  if (active.remaining > 1) {
+    active.remaining -= 1;
+    communityData.activeOutcomes = communityData.activeOutcomes.map(item => item.id === active.id ? active : item);
+    persistCommunityData();
+    broadcastActiveOutcomes();
+    const plural = active.unit === 'game' ? 'games' : active.unit === 'round' ? 'rounds' : 'tasks';
+    chatSay('✅ ' + active.label + ': 1 completed, ' + active.remaining + ' ' + plural + ' remaining.');
+    return;
+  }
+  communityData.activeOutcomes = communityData.activeOutcomes.filter(item => item.id !== active.id);
+  persistCommunityData();
+  broadcastActiveOutcomes();
+  broadcast('outcomeDone', { id: active.id, type: active.type, label: active.label });
+  chatSay('🎉 Completed: ' + active.label + '!');
 }
 
 function readSavedTokens() {
@@ -463,6 +698,8 @@ function currentPublicState() {
     channel: config.channel,
     fillPerThrow: config.fillPerThrow,
     statusMessage: state.statusMessage,
+    currentOutcome: state.currentOutcome,
+    activeOutcomes: activeOutcomeSnapshot(),
     vote: voteSnapshot(),
   };
 }
@@ -517,38 +754,39 @@ function noticeCooldown(username, result) {
 function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest = false } = {}) {
   const cleanUsername = String(username || 'viewer').trim().slice(0, 32);
   const usernameKey = cleanUsername.toLowerCase();
-  if (!cleanUsername || state.brewing) return { accepted: false, reason: state.brewing ? 'brewing' : 'invalid-user' };
+  if (!cleanUsername || state.brewing || isVotingOpen) {
+    return { accepted: false, reason: state.brewing || isVotingOpen ? 'brewing' : 'invalid-user' };
+  }
 
   const now = Date.now();
-
-  // 1. GLOBAL KONTROL: Herhangi bir atıştan sonra GLOBAL_COOLDOWN_SECONDS
-  if (!bypassCooldown && (now - lastGlobalThrow < config.globalCooldownMs)) {
+  if (!bypassCooldown && now - lastGlobalThrow < config.globalCooldownMs) {
     return { accepted: false, reason: 'global-cooldown' };
   }
 
-  // 2. KULLANICI KONTROLÜ: Aynı kişi THROW_COOLDOWN_SECONDS beklemeli
   const userCooldownMs = config.userCooldownMs;
   const lastUserThrow = cooldowns.get(usernameKey) || 0;
-  
-  if (!bypassCooldown && (now - lastUserThrow < userCooldownMs)) {
+  if (!bypassCooldown && now - lastUserThrow < userCooldownMs) {
     const remainingSec = Math.ceil((userCooldownMs - (now - lastUserThrow)) / 1000);
     return { accepted: false, reason: 'user-cooldown', remaining: remainingSec };
   }
 
-  // Kontroller geçildiyse süreleri güncelle
   if (!bypassCooldown) {
     lastGlobalThrow = now;
     cooldowns.set(usernameKey, now);
   }
 
-  // Harita (Map) temizliği (şişmeyi önlemek için)
   if (cooldowns.size > 2000) {
-    const expiry = now - (userCooldownMs * 2);
+    const expiry = now - Math.max(userCooldownMs, 60_000) * 2;
     for (const [key, timestamp] of cooldowns) if (timestamp < expiry) cooldowns.delete(key);
   }
 
   const emoji = requestedEmoji || '🎁';
-  state.progress = Math.min(100, state.progress + config.fillPerThrow);
+  const golden = crypto.randomInt(100) < config.goldenChance;
+  const multiplier = golden ? config.goldenMultiplier : 1;
+  const before = state.progress;
+  const requestedGain = config.fillPerThrow * multiplier;
+  state.progress = Math.min(100, state.progress + requestedGain);
+  const gained = state.progress - before;
   state.throwCount += 1;
   state.lastThrower = cleanUsername;
 
@@ -557,13 +795,19 @@ function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest
     emoji,
     progress: state.progress,
     isTest,
+    golden,
+    multiplier,
+    gained,
     timestamp: now,
   });
   broadcastState();
-  console.log(`[${isTest ? 'TEST' : 'CHAT'}] !throw: ${cleanUsername} ${emoji} (${state.progress}%)`);
+  if (golden) {
+    broadcast('goldenThrow', { username: cleanUsername, emoji, gained, multiplier, progress: state.progress });
+  }
+  console.log('[CHAT] !throw: ' + cleanUsername + ' ' + emoji + (golden ? ' GOLDEN x' + multiplier : '') + ' (+' + gained + '%, ' + state.progress + '%)');
 
   if (state.progress >= 100) completePotion();
-  return { accepted: true, progress: state.progress };
+  return { accepted: true, progress: state.progress, golden, gained };
 }
 
 function completePotion() {
@@ -571,29 +815,29 @@ function completePotion() {
   state.progress = 100;
   state.brewing = true;
   state.potionNumber += 1;
+  const outcome = crypto.randomInt(100) < config.rewardChance ? 'reward' : 'punishment';
+  state.currentOutcome = outcome;
+  animationComplete = false;
+  voteComplete = false;
+
   const result = {
     potionNumber: state.potionNumber,
-    message: 'POTION BREWED!',
+    outcome,
+    message: outcome === 'reward' ? 'REWARD BREWED!' : 'PUNISHMENT BREWED!',
     timestamp: Date.now(),
   };
   broadcastState();
   broadcast('potionComplete', result);
-  console.log(`[CAULDRON] Iksir hazir (#${state.potionNumber}). Oylama basliyor.`);
+  console.log('[CAULDRON] Potion brewed (#' + state.potionNumber + '); outcome type: ' + outcome + '.');
+  startOutcomeVote(outcome);
 
-  // Kazan %100 olunca sohbette oylamayı otomatik başlat!
-  startPunishmentVote();
-
-  if (brewResetTimer) clearTimeout(brewResetTimer);
-  brewResetTimer = setTimeout(() => {
-    state.progress = 0;
-    state.throwCount = 0;
-    state.brewing = false;
-    state.lastThrower = '';
-    broadcastState();
-    broadcast('brewReset', { potionNumber: state.potionNumber });
-    console.log('[CAULDRON] Kazan sifirlandi.');
-  }, config.brewResetMs);
-  brewResetTimer.unref?.();
+  if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
+  animationFailsafeTimer = setTimeout(() => {
+    animationComplete = true;
+    console.warn('[CAULDRON] Overlay animation callback timed out; continuing safely.');
+    finishBrewIfReady();
+  }, 60_000);
+  animationFailsafeTimer.unref?.();
 }
 
 async function startTwitchClient() {
@@ -653,34 +897,42 @@ async function startTwitchClient() {
     });
 
     client.on('message', (channel, tags, message, self) => {
-      // Botun kendi mesajlarını döngüye sokmasını engelle
       if (self || !message || !channel) return;
-      
       const username = tags['display-name'] || tags.username || 'viewer';
+      const login = String(tags.username || username).toLowerCase();
+      const clean = message.trim();
+      const isMod = isModOrBroadcaster(tags, username);
 
-      // 1. Oylama (Punishment Vote) Kontrolü
-      if (isVotingOpen) {
-        const voteMatch = message.trim().match(/^[1-5]$/);
-        if (voteMatch) {
-          // Aynı kişi display-name büyük/küçük harf farkıyla iki kez oy veremesin
-          const voterKey = String(tags.username || username).toLowerCase();
-          if (castVote(voterKey, voteMatch[0])) return; // Oy verildiyse !throw komutunu kontrol etmeden çık
-        }
+      if (/^!done$/i.test(clean)) {
+        if (isMod) completeActiveOutcome(username);
+        return;
       }
 
-      // 2. !throw Komutu Kontrolü
-      const match = /^!throw(?:\s+([\s\S]*))?$/i.exec(message.trim());
+      const suggestionMatch = /^!(punish|reward)\s+([\s\S]+)$/i.exec(clean);
+      if (suggestionMatch) {
+        submitCommunitySuggestion(suggestionMatch[1].toLowerCase() === 'reward' ? 'reward' : 'punishment', suggestionMatch[2], username);
+        return;
+      }
+
+      const moderationMatch = /^!(approve|reject)\s+(\d+)$/i.exec(clean);
+      if (moderationMatch) {
+        if (isMod) moderateSuggestion(moderationMatch[1].toLowerCase(), Number(moderationMatch[2]), username);
+        return;
+      }
+      if (/^!suggestions$/i.test(clean)) {
+        if (isMod) reportPendingSuggestions(username);
+        return;
+      }
+
+      if (isVotingOpen) {
+        const voteMatch = clean.match(/^[1-5]$/);
+        if (voteMatch && castVote(login, Number(voteMatch[0]))) return;
+      }
+
+      const match = /^!throw(?:\s+([\s\S]*))?$/i.exec(clean);
       if (!match) return;
-
       const requestedEmoji = resolveThrowEmoji(match[1] || '');
-
-      // Atışı yap ve sonucu 'result' değişkenine kaydet
-      const result = performThrow(username, requestedEmoji, {
-        bypassCooldown: false,
-        isTest: false
-      });
-
-      // 3. Cooldown (Bekleme Süresi) Uyarıları
+      const result = performThrow(username, requestedEmoji, { bypassCooldown: false, isTest: false });
       if (!result.accepted) noticeCooldown(username, result);
     });
 
@@ -751,6 +1003,14 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && pathname === '/api/state') {
     return sendJson(res, 200, currentPublicState());
+  }
+  if (req.method === 'POST' && pathname === '/api/animation/complete') {
+    if (!state.brewing) return sendJson(res, 409, { accepted: false, reason: 'not-brewing' });
+    animationComplete = true;
+    if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
+    animationFailsafeTimer = null;
+    finishBrewIfReady();
+    return sendJson(res, 200, { accepted: true, brewing: state.brewing, voteOpen: isVotingOpen });
   }
   if (req.method === 'GET' && pathname === '/setup') {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
@@ -826,7 +1086,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && pathname === '/api/test/start-vote') {
     // Kazanı doldurmadan oylama panelini denemek için
     if (isVotingOpen) return sendJson(res, 409, { accepted: false, voting: true });
-    startPunishmentVote();
+    startOutcomeVote('punishment');
     return sendJson(res, 200, { accepted: true, voting: isVotingOpen });
   }
   if (req.method === 'POST' && pathname === '/api/test/vote') {
@@ -844,7 +1104,12 @@ const server = http.createServer(async (req, res) => {
     state.progress = 0;
     state.throwCount = 0;
     state.brewing = false;
+    state.currentOutcome = null;
     state.lastThrower = '';
+    animationComplete = false;
+    voteComplete = false;
+    if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
+    animationFailsafeTimer = null;
     cooldowns.clear();
     broadcastState();
     broadcast('brewReset', { potionNumber: state.potionNumber, manual: true });
@@ -886,6 +1151,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 // A tiny SSE heartbeat keeps the overlay connection alive; it is not a busy loop.
+const coolingTimer = setInterval(() => {
+  if (config.coolingPerMinute <= 0 || state.brewing || isVotingOpen || state.progress <= 0) return;
+  const before = state.progress;
+  state.progress = Math.max(0, state.progress - config.coolingPerMinute);
+  if (state.progress !== before) {
+    broadcastState();
+    broadcast('cauldronCooling', { progress: state.progress, lost: before - state.progress });
+    console.log('[CAULDRON] Cooling: -' + (before - state.progress) + '% (' + state.progress + '%).');
+  }
+}, 60_000);
+coolingTimer.unref?.();
+
 const heartbeat = setInterval(() => {
   for (const response of sseClients) {
     try { response.write(': keepalive\n\n'); } catch { sseClients.delete(response); }
@@ -894,6 +1171,7 @@ const heartbeat = setInterval(() => {
 heartbeat.unref?.();
 
 server.listen(config.port, config.host, () => {
+  if (!fs.existsSync(COMMUNITY_PATH)) persistCommunityData();
   console.log('');
   console.log('🧙 Sakuya Cauldron hazir.');
   console.log(`Overlay: http://127.0.0.1:${config.port}/overlay`);
@@ -915,7 +1193,9 @@ server.listen(config.port, config.host, () => {
 
 function shutdown() {
   clearInterval(heartbeat);
+  clearInterval(coolingTimer);
   if (brewResetTimer) clearTimeout(brewResetTimer);
+  if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
   clearVoteTimers();
   for (const response of sseClients) {
     try { response.end(); } catch { /* ignored */ }
