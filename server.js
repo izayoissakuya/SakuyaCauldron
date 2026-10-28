@@ -1098,7 +1098,7 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, accepted ? 200 : 409, { accepted, option, voting: isVotingOpen });
   }
   if (req.method === 'POST' && pathname === '/api/test/reset') {
-    cancelPunishmentVote();
+    cancelOutcomeVote();
     if (brewResetTimer) clearTimeout(brewResetTimer);
     brewResetTimer = null;
     state.progress = 0;
