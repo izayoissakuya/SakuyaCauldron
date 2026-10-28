@@ -2,15 +2,15 @@
 
 **English** · [Türkçe](README_TR.md)
 
-A lightweight cauldron overlay for OBS, played through Twitch chat. Viewers type `!throw` to drop an emoji into the cauldron; when it reaches 100%, chat runs a 30-second **punishment vote** and the winner is shown on screen.
+A lightweight cauldron overlay for OBS, played through Twitch chat. Viewers type `!throw` to drop an emoji into the cauldron; at 100%, the configured odds select a **reward or punishment vote**. The winning outcome stays visible until a streamer or moderator completes it with `!done`.
 
 ## How it works
 
-1. A viewer types `!throw`; their emoji drops into the cauldron and the percentage goes up.
-2. At 100% a "POTION BREWED!" event fires and the **punishment vote** starts.
-3. Chat votes by typing `1`–`5` (one vote per person). The overlay shows live counts and a countdown in the top-right corner, and the bot posts the options in chat.
-4. When time is up, the punishment with the most votes is announced on screen and in chat. On a **tie** one of the tied options is picked at random; with **no votes** one of all options is picked at random.
-5. The cauldron resets and a new round begins.
+1. A viewer types `!throw`; their emoji drops into the cauldron and the percentage goes up. The personal cooldown defaults to 180 seconds, plus a shared 5-second cooldown between any two throws.
+2. At 100%, the configured odds choose a reward or punishment type and the matching 30-second vote begins.
+3. Chat votes by typing `1`–`5` (one vote per person). Ties are broken randomly; if no one votes, one of the five options is selected randomly.
+4. The winning reward or punishment remains in a persistent active card until a streamer/moderator uses `!done`. Multi-game/task outcomes decrement their remaining count each time.
+5. The cauldron resets only after its animation and the vote have both completed.
 
 Architecture: one Twitch chat connection and a local HTTP server in Node.js; the overlay receives events over Server-Sent Events (SSE). No external AI, WebGL or image processing. The server only listens on `127.0.0.1` and is never exposed to your network.
 
@@ -77,7 +77,12 @@ If the overlay is refreshed mid-vote, the panel picks up where it left off.
 
 | Command | What it does |
 | --- | --- |
-| `!throw` | Throws a gift box (🎁). |
+| `!throw` | Throws a gift box (🎁); a 5% golden throw adds triple fill by default. |
+| `!done` | Streamer/mod completes one active reward or punishment step; the final completion removes the card and plays confetti. |
+| `!punish <text>` | Submit a punishment suggestion for moderator approval, e.g. `!punish Pistol Only | games=1`. |
+| `!reward <text>` | Submit a reward suggestion for moderator approval. |
+| `!approve <id>` / `!reject <id>` | Moderator approves or rejects a pending suggestion. |
+| `!suggestions` | Moderator lists pending suggestions. |
 | `!throw dragon`, `!throw pizza` | Throws the emoji matching the word (English keywords). |
 | `!throw kedi`, `!throw cadı` | Turkish shortcuts: kedi, köpek, fare, hayalet, balkabağı, yarasa, örümcek, cadı, hediye, pizza, kalp, ejderha, kurukafa. |
 | `!throw 🎃` | Throws the emoji you typed. |
@@ -91,7 +96,7 @@ The server checks the emoji against a blocklist before it reaches the screen. A 
 
 ### Cooldowns and notices
 
-- The same person must wait `THROW_COOLDOWN_SECONDS` (default 120 s) between throws.
+- The same person must wait `THROW_COOLDOWN_SECONDS` (default 180 s) between throws.
 - There is also a shared `GLOBAL_COOLDOWN_SECONDS` (default 5 s) between any two throws.
 - When someone hits their personal cooldown, the bot tells them how long is left ("you can throw again in 1m 55s"). To keep chat clean it speaks at most once per 30 s per person and once per 3 s per channel, and stays silent for the shared cooldown. Set `COOLDOWN_NOTICES=false` to turn notices off.
 
@@ -108,10 +113,14 @@ The five punishments live in the `PUNISHMENTS` list in `server.js`. You can chan
 | `PORT` | `3131` | Local server port. If you change it, change the OAuth Redirect URL too. |
 | `FILL_PER_THROW` | `10` | How much each valid `!throw` adds (10 = full after 10 throws). |
 | `BREW_RESET_MS` | `4500` | Delay before the cauldron resets after filling (ms). |
-| `THROW_COOLDOWN_SECONDS` | `120` | Wait between one person's throws. |
+| `THROW_COOLDOWN_SECONDS` | `180` | Wait between one person's throws (3 minutes). |
 | `GLOBAL_COOLDOWN_SECONDS` | `5` | Shared wait between any two throws. |
 | `COOLDOWN_NOTICES` | `true` | Whether the bot posts cooldown notices. |
-| `VOTE_SECONDS` | `30` | Vote length (5–300 s). |
+| `VOTE_SECONDS` | `30` | Reward or punishment vote length (5–300 s). |
+| `REWARD_CHANCE` | `50` | Chance (%) that a full cauldron starts a reward vote; remaining chance starts punishment. |
+| `GOLDEN_THROW_CHANCE` | `5` | Golden throw chance (%). |
+| `GOLDEN_THROW_MULTIPLIER` | `3` | Fill multiplier for golden throws. |
+| `CAULDRON_COOLING_PER_MINUTE` | `1` | Percentage points lost per idle minute; `0` disables cooling. |
 | `BLOCKED_EMOJIS` | empty | Extra blocked emojis on top of the defaults. |
 
 Note: `USER_COOLDOWN_SECONDS` and `HOST` from older versions are no longer used and can be removed.
@@ -123,13 +132,17 @@ Note: `USER_COOLDOWN_SECONDS` and `HOST` from older versions are no longer used 
 - `public/style.css`: transparent overlay, cauldron and vote panel styles, animations.
 - `public/app.js`: receives server events, drops emojis, updates the percentage and the vote panel.
 - `public/assets/`: cauldron GIFs (`cauldron-idle`, `cauldron-add`, `reward`, `punishment`).
+- `community-data.json`: local approved community rewards/punishments, pending suggestions, and active outcomes; excluded from version control.
 - `.env`: local secrets and settings (not committed).
 - `tokens.json`: OAuth tokens (not committed).
 
-## Known gaps / to do
+## Behavior notes
 
-- **No reward/punishment split yet.** When the cauldron fills, the overlay currently always plays the "reward" GIF and the "REWARD UNLOCKED!" text, then the vote result is announced as a punishment. `punishment.gif` is not used yet.
-- After the cauldron animation the overlay calls `/api/animation/complete`, which the server doesn't implement yet (it returns 404; harmless, it only logs a warning in the browser console).
+- `REWARD_CHANCE` chooses the outcome type; the default is 50% reward and 50% punishment. Both types use the same five-option voting flow and persistent active-result lifecycle.
+- Active outcomes remain visible until `!done` is used. Suggestion suffixes such as `games=3`, `rounds=2`, or `tasks=4` store a remaining count.
+- The overlay reports animation completion at `/api/animation/complete`; the cauldron resets when both the animation and vote are complete.
+- Golden throws and per-minute cooling are configurable. Cooling pauses during a round completion and voting.
+- Viewer suggestions enter the voting catalog only after moderator approval.
 
 ## Security note
 
