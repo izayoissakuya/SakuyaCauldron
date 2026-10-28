@@ -458,7 +458,6 @@ async function connectEvents() {
     try {
       const data = JSON.parse(event.data);
       spawnConfetti();
-      if (connectionStatus) setConnection((data.type === 'reward' ? 'Reward completed: ' : 'Punishment completed: ') + data.label, 'connected');
     } catch (error) { console.warn('[Overlay] outcomeDone failed:', error); }
   });
 }
