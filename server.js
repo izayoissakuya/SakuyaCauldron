@@ -221,11 +221,11 @@ const DEFAULT_PUNISHMENTS = [
   { label: 'VIP a Random Chatter', remaining: 1, unit: 'task' },
 ];
 const DEFAULT_REWARDS = [
-  { label: 'Skip the next punishment', remaining: 1, unit: 'task' },
   { label: 'Choose the next game mode', remaining: 1, unit: 'task' },
   { label: 'Shout-out a chatter', remaining: 1, unit: 'task' },
   { label: 'Choose the next cauldron emoji', remaining: 1, unit: 'task' },
-  { label: 'One bonus round with no punishment', remaining: 1, unit: 'round' },
+  { label: 'Streamer bonus round', remaining: 1, unit: 'round' },
+  { label: 'Pick the next challenge', remaining: 1, unit: 'task' },
 ];
 const KEYCAPS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
 const VOTE_OPTION_COUNT = 5;
