@@ -51,7 +51,6 @@ const config = {
   coolingPerMinute: clampInt(process.env.CAULDRON_COOLING_PER_MINUTE, 1, 0, 100),
   // Bot "şu kadar bekle" uyarısını chat'e yazsın mı
   cooldownNotices: !/^(0|false|off|no)$/i.test((process.env.COOLDOWN_NOTICES || '').trim()),
-  brewResetMs: clampInt(process.env.BREW_RESET_MS, 4500, 1000, 60000),
   voteMs: clampInt(process.env.VOTE_SECONDS, 30, 5, 300) * 1000,
 };
 
@@ -208,8 +207,8 @@ let twitchClient = null;
 let oauthState = null;
 let testThrowNumber = 0;
 let testVoterNumber = 0;
-let brewResetTimer = null;
 let lastGlobalThrow = 0;
+let lastCoolingAt = Date.now();
 // ---------------------------------------------------------------------------
 // Reward/punishment votes, persistent active outcomes, and moderated community
 // suggestions. The current outcome type is chosen when the cauldron reaches 100%.
@@ -504,6 +503,8 @@ function submitCommunitySuggestion(type, payload, username) {
   }
   const normalized = item.label.toLocaleLowerCase('en');
   const allItems = [
+    ...DEFAULT_PUNISHMENTS,
+    ...DEFAULT_REWARDS,
     ...communityData.pendingSuggestions,
     ...communityData.approved.punishment,
     ...communityData.approved.reward,
@@ -780,6 +781,8 @@ function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest
     for (const [key, timestamp] of cooldowns) if (timestamp < expiry) cooldowns.delete(key);
   }
 
+  const wasEmpty = state.progress <= 0;
+  if (wasEmpty) lastCoolingAt = now;
   const emoji = requestedEmoji || '🎁';
   const golden = crypto.randomInt(100) < config.goldenChance;
   const multiplier = golden ? config.goldenMultiplier : 1;
@@ -1099,8 +1102,6 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && pathname === '/api/test/reset') {
     cancelOutcomeVote();
-    if (brewResetTimer) clearTimeout(brewResetTimer);
-    brewResetTimer = null;
     state.progress = 0;
     state.throwCount = 0;
     state.brewing = false;
@@ -1153,14 +1154,18 @@ const server = http.createServer(async (req, res) => {
 // A tiny SSE heartbeat keeps the overlay connection alive; it is not a busy loop.
 const coolingTimer = setInterval(() => {
   if (config.coolingPerMinute <= 0 || state.brewing || isVotingOpen || state.progress <= 0) return;
-  const before = state.progress;
-  state.progress = Math.max(0, state.progress - config.coolingPerMinute);
-  if (state.progress !== before) {
-    broadcastState();
-    broadcast('cauldronCooling', { progress: state.progress, lost: before - state.progress });
-    console.log('[CAULDRON] Cooling: -' + (before - state.progress) + '% (' + state.progress + '%).');
-  }
-}, 60_000);
+  const now = Date.now();
+  if (now - lastCoolingAt < 60_000) return;
+  const elapsedMinutes = Math.floor((now - lastCoolingAt) / 60_000);
+  const loss = Math.min(state.progress, elapsedMinutes * config.coolingPerMinute);
+  if (loss <= 0) return;
+  state.progress = Math.max(0, state.progress - loss);
+  lastCoolingAt += elapsedMinutes * 60_000;
+  if (state.progress === 0) lastCoolingAt = now;
+  broadcastState();
+  broadcast('cauldronCooling', { progress: state.progress, lost: loss });
+  console.log('[CAULDRON] Cooling: -' + loss + '% (' + state.progress + '%).');
+}, 1_000);
 coolingTimer.unref?.();
 
 const heartbeat = setInterval(() => {
@@ -1194,7 +1199,6 @@ server.listen(config.port, config.host, () => {
 function shutdown() {
   clearInterval(heartbeat);
   clearInterval(coolingTimer);
-  if (brewResetTimer) clearTimeout(brewResetTimer);
   if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
   clearVoteTimers();
   for (const response of sseClients) {
