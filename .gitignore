@@ -3,3 +3,5 @@ node_modules/
 tokens.json
 npm-debug.log*
 .DS_Store
+community-data.json
+community-data.json.tmp
