@@ -398,3 +398,5 @@ body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #fff; }
   .active-outcomes { width: min(75vw, 350px); }
   .active-outcome-label { font-size: 12px; }
 }
+
+.test-mode .active-outcomes { top: 270px; }
