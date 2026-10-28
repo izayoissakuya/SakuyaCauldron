@@ -44,6 +44,7 @@ let voteActive = false;
 let voteTick = null;
 let voteHideTimer = null;
 let configGoldenMultiplier = 3;
+let lastAnimatedPotionNumber = 0;
 
 function delay(ms) {
   return new Promise(resolve => window.setTimeout(resolve, ms));
@@ -129,6 +130,13 @@ function renderState(data = {}) {
   }
   
   if (stage) stage.classList.toggle('brewing', Boolean(data.brewing));
+
+  // Restore a currently brewing animation if OBS/browser source was refreshed.
+  const potionNumber = Number(data.potionNumber) || 0;
+  if (data.brewing && data.currentOutcome && potionNumber > 0 && potionNumber !== lastAnimatedPotionNumber) {
+    lastAnimatedPotionNumber = potionNumber;
+    queueAnimation(() => playPotionComplete({ outcome: data.currentOutcome, potionNumber, resumed: true }), 'Resume Potion Result');
+  }
 
   // OBS kaynağı oylama sırasında yenilenirse paneli kaldığı yerden göster
   if (data.vote?.open && !voteActive) showVote(data.vote);
@@ -415,8 +423,13 @@ async function connectEvents() {
     catch (error) {}
   });
   events.addEventListener('potionComplete', event => {
-    try { queueAnimation(() => playPotionComplete(JSON.parse(event.data)), 'Potion Result'); }
-    catch (error) {}
+    try {
+      const data = JSON.parse(event.data);
+      const potionNumber = Number(data.potionNumber) || 0;
+      if (potionNumber && potionNumber === lastAnimatedPotionNumber) return;
+      if (potionNumber) lastAnimatedPotionNumber = potionNumber;
+      queueAnimation(() => playPotionComplete(data), 'Potion Result');
+    } catch (error) { console.warn('[Overlay] potionComplete failed:', error); }
   });
   events.addEventListener('brewReset', () => {
     queueAnimation(async () => resetBrew(), 'Reset Cauldron');
