@@ -100,9 +100,11 @@ The server checks the emoji against a blocklist before it reaches the screen. A 
 - There is also a shared `GLOBAL_COOLDOWN_SECONDS` (default 5 s) between any two throws.
 - When someone hits their personal cooldown, the bot tells them how long is left ("you can throw again in 1m 55s"). To keep chat clean it speaks at most once per 30 s per person and once per 3 s per channel, and stays silent for the shared cooldown. Set `COOLDOWN_NOTICES=false` to turn notices off.
 
-## 6. Punishment list
+## 6. Reward and punishment lists
 
-The five punishments live in the `PUNISHMENTS` list in `server.js`. You can change the texts; if you change the number of options from 5, also update the "1–5" chat message and the vote check.
+The default options live in `DEFAULT_PUNISHMENTS` and `DEFAULT_REWARDS` in `server.js`. Each round votes on five options from the selected outcome type. Moderator-approved community suggestions are added to that catalog; if a catalog contains more than five entries, five are randomly presented per vote.
+
+Rewards and punishments are not automatically integrated with a game. The streamer/moderator fulfills the outcome, then uses `!done`. Suffixes such as `games=3`, `rounds=2`, or `tasks=4` set the remaining count on the active card. Each `!done` reduces it by one; the final completion removes the card and plays confetti.
 
 ## 7. `.env` settings
 
