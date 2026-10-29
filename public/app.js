@@ -269,11 +269,25 @@ function finishVote(result = {}) {
   voteHideTimer = window.setTimeout(hideVote, VOTE_RESULT_HOLD_MS);
 }
 
-function showFlyingItem(emoji) {
+function showFlyingItem(emoji, username = '', golden = false) {
   if (!flyLayer) return;
+
   const item = document.createElement('span');
-  item.className = 'flying-item';
-  item.textContent = emoji || '🎁';
+  item.className = 'flying-item' + (golden ? ' golden' : '');
+
+  const symbol = document.createElement('span');
+  symbol.className = 'flying-emoji';
+  symbol.textContent = emoji || '🎁';
+  item.appendChild(symbol);
+
+  const safeUsername = String(username || '').trim().slice(0, 20);
+  if (safeUsername) {
+    const name = document.createElement('span');
+    name.className = 'flying-name';
+    name.textContent = safeUsername;
+    item.appendChild(name);
+  }
+
   flyLayer.appendChild(item);
   item.addEventListener('animationend', () => item.remove(), { once: true });
   window.setTimeout(() => item.remove(), 1600);
@@ -294,7 +308,7 @@ async function playThrow(eventData = {}) {
 
   if (THROW_ASSET) {
     setArt(THROW_ASSET, true);
-    showFlyingItem(emoji); // Eşya atma animasyonu
+    showFlyingItem(emoji, eventData.username, Boolean(eventData.golden)); // Eşya ve kullanıcı adı tek öğe olarak düşer
     if (eventData.golden) {
       configGoldenMultiplier = Math.max(2, Number(eventData.multiplier) || 3);
       if (stage) stage.classList.add('golden-throw-active');
@@ -304,7 +318,7 @@ async function playThrow(eventData = {}) {
     if (stage) stage.classList.remove('golden-throw-active');
     setArt(IDLE_ASSET, true);
   } else {
-    showFlyingItem(emoji);
+    showFlyingItem(emoji, eventData.username, Boolean(eventData.golden));
     await delay(700);
   }
 }
@@ -490,40 +504,3 @@ if (art) {
 }
 
 connectEvents();
-
-(function () {
-  var st = document.createElement('style');
-  st.textContent = '#status-chip.connected{display:none!important}';
-  document.head.appendChild(st);
-
-  function showName(name) {
-    var layer = document.getElementById('flyLayer');
-    var emoji = layer && layer.lastElementChild;           // app.js'in az once olusturdugu emoji
-    var tag = document.createElement('div');
-    tag.textContent = String(name).slice(0, 20);           // textContent: HTML olarak calismaz
-    tag.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;white-space:nowrap;' +
-      'font:700 14px/1 sans-serif;color:#fff;padding:4px 9px;border-radius:999px;' +
-      'background:rgba(30,12,48,.85);border:1px solid rgba(170,115,255,.8);text-shadow:0 1px 2px #000;' +
-      'transform:translateX(-50%);left:-999px;top:-999px;';
-    document.body.appendChild(tag);
-    var start = performance.now();
-    (function follow(now) {
-      var age = now - start;
-      if (age > 1500 || !emoji || !emoji.isConnected) { tag.remove(); return; }
-      var r = emoji.getBoundingClientRect();
-      tag.style.left = (r.left + r.width / 2) + 'px';
-      tag.style.top = (r.bottom + 2) + 'px';
-      tag.style.opacity = getComputedStyle(emoji).opacity;
-      requestAnimationFrame(follow);
-    })(start);
-  }
-
-  console.log('[name-tag] v2 yuklendi');
-  var es = new EventSource('/events');
-  es.addEventListener('throw', function (e) {
-    try {
-      var d = JSON.parse(e.data);
-      if (d && d.username) setTimeout(function () { showName(d.username); }, 40);
-    } catch (_) {}
-  });
-})();
