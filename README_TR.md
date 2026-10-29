@@ -77,7 +77,8 @@ Overlay oylama sırasında yenilenirse panel kaldığı yerden devam eder.
 
 | Komut | Ne yapar |
 | --- | --- |
-| `!throw` | Kazana hediye kutusu (🎁) atar; %5 ihtimalle altın atış olur ve varsayılan olarak üç kat dolar. |
+| `!throw` | Standart hediye kutusu (🎁) atar; %5 ihtimalle altın atış olur ve varsayılan olarak üç kat dolar. |
+| `!throw EmoteName` | `.env` içinde yapılandırılmış gerçek bir kanal emotesini kullanır; dolum ve ceza ihtimali ayarları emote'a göre değişir. |
 | `!done` | Yayıncı/mod aktif ödül veya cezanın bir aşamasını tamamlar. Son aşamada kart kaldırılır ve konfeti oynar. |
 | `!punish <metin>` | Bir ceza önerisini moderatör onayına gönderir. Örn. `!punish Pistol Only | games=1`. |
 | `!reward <metin>` | Bir ödül önerisini moderatör onayına gönderir. |
