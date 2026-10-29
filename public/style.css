@@ -83,7 +83,20 @@ body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #fff; }
 }
 
 /* Atış sahibinin ismi (emojiyle birlikte düşer) */
-.flying-item { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.flying-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: max-content;
+  max-width: 220px;
+}
+.flying-emoji { line-height: 1; }
+.flying-name {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .flying-name {
   font-size: 13px;
   font-weight: 700;
@@ -416,3 +429,6 @@ body { font-family: Inter, "Segoe UI", system-ui, sans-serif; color: #fff; }
 }
 
 .test-mode .active-outcomes { top: 270px; }
+
+/* Hide the connection label only after a successful connection; keep it for errors. */
+#status-chip.connected { display: none !important; }
