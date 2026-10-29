@@ -47,7 +47,15 @@ const config = {
   goldenChance: clampInt(process.env.GOLDEN_THROW_CHANCE, 5, 0, 100),
   goldenMultiplier: clampInt(process.env.GOLDEN_THROW_MULTIPLIER, 3, 2, 10),
   rewardChance: clampInt(process.env.REWARD_CHANCE, 50, 0, 100),
-  coolingPerMinute: clampInt(process.env.CAULDRON_COOLING_PER_MINUTE, 1, 0, 100),
+  // 0.5 percentage points per minute means 1% lost every two minutes by default.
+  coolingPerMinute: clampNumber(process.env.CAULDRON_COOLING_PER_MINUTE, 0.5, 0, 100),
+  // Define 4 custom channel-emote throw rules in .env. A blank name disables that slot.
+  throwEmotes: [1, 2, 3, 4].map(slot => ({
+    name: String(process.env['THROW_EMOTE_' + slot + '_NAME'] || '').trim().replace(/^:/, '').replace(/:$/, ''),
+    kind: String(process.env['THROW_EMOTE_' + slot + '_KIND'] || (slot <= 2 ? 'normal' : 'animated')).trim().toLowerCase() === 'animated' ? 'animated' : 'normal',
+    fill: clampInt(process.env['THROW_EMOTE_' + slot + '_FILL'], 15, 1, 100),
+    punishmentBonus: clampNumber(process.env['THROW_EMOTE_' + slot + '_PUNISHMENT_BONUS'], 2, 0, 100),
+  })).filter(item => item.name),
   // Bot "şu kadar bekle" uyarısını chat'e yazsın mı
   cooldownNotices: !/^(0|false|off|no)$/i.test((process.env.COOLDOWN_NOTICES || '').trim()),
   voteMs: clampInt(process.env.VOTE_SECONDS, 30, 5, 300) * 1000,
@@ -57,6 +65,62 @@ function clampInt(value, fallback, min, max) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number.parseFloat(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+// Match only emotes explicitly configured by the channel owner. Twitch IRC gives
+// an emotes tag mapping emote IDs to character ranges; this lets the overlay show
+// the actual emote image without trusting arbitrary IDs sent by chat users.
+function normalizeConfiguredEmoteName(value) {
+  return String(value || '').trim().replace(/^:/, '').replace(/:$/, '').toLocaleLowerCase('en');
+}
+
+function findTwitchEmoteId(tags, message, token) {
+  const emotes = tags && tags.emotes;
+  if (!emotes || typeof emotes !== 'object') return null;
+
+  const tokenName = String(token || '').replace(/^:/, '').replace(/:$/, '');
+  const start = String(message || '').indexOf(tokenName);
+  if (start < 0) return null;
+  const end = start + tokenName.length - 1;
+
+  for (const [id, ranges] of Object.entries(emotes)) {
+    if (!/^\d+$/.test(id)) continue;
+    const list = Array.isArray(ranges) ? ranges : String(ranges || '').split(',');
+    for (const range of list) {
+      const match = String(range).match(/^(\d+)-(\d+)$/);
+      if (!match) continue;
+      const emoteStart = Number(match[1]);
+      const emoteEnd = Number(match[2]);
+      if (emoteStart <= start && emoteEnd >= end) return id;
+    }
+  }
+  return null;
+}
+
+function parseThrowCommand(message, tags) {
+  const match = /^!throw(?:\s+(.+?))?\s*$/i.exec(String(message || '').trim());
+  if (!match) return { matched: false };
+  const rawToken = String(match[1] || '').trim();
+  if (!rawToken) return { matched: true, valid: true, emote: null, emoteId: null };
+  if (/\s/.test(rawToken)) return { matched: true, valid: false, reason: 'Only one configured emote may follow !throw.' };
+
+  const name = normalizeConfiguredEmoteName(rawToken);
+  const emote = config.throwEmotes.find(item => normalizeConfiguredEmoteName(item.name) === name);
+  if (!emote) {
+    return { matched: true, valid: false, reason: 'Only !throw or !throw <configured channel emote> is supported.' };
+  }
+  return {
+    matched: true,
+    valid: true,
+    emote,
+    emoteId: findTwitchEmoteId(tags, String(message || '').trim(), rawToken),
+  };
 }
 
 // Every accepted !throw uses this one fixed visual item.
@@ -71,6 +135,7 @@ const state = {
   brewing: false,
   potionNumber: 0,
   lastThrower: '',
+  punishmentBonus: 0,
   currentOutcome: null,
   twitchConnected: false,
   twitchLogin: '',
@@ -287,6 +352,7 @@ function finishBrewIfReady() {
   state.progress = 0;
   state.throwCount = 0;
   state.brewing = false;
+  state.punishmentBonus = 0;
   state.currentOutcome = null;
   state.lastThrower = '';
   broadcastState();
@@ -583,6 +649,7 @@ function currentPublicState() {
     brewing: state.brewing,
     potionNumber: state.potionNumber,
     lastThrower: state.lastThrower,
+    punishmentBonus: state.punishmentBonus,
     twitchConnected: state.twitchConnected,
     twitchLogin: state.twitchLogin,
     channel: config.channel,
@@ -641,7 +708,7 @@ function noticeCooldown(username, result) {
   chatSay(`@${username}, you can throw again in ${formatWait(result.remaining)}.`);
 }
 
-function performThrow(username, { bypassCooldown = false, isTest = false } = {}) {
+function performThrow(username, { bypassCooldown = false, isTest = false, emote = null, emoteId = null } = {}) {
   const cleanUsername = String(username || 'viewer').trim().slice(0, 32);
   const usernameKey = cleanUsername.toLowerCase();
   if (!cleanUsername || state.brewing || isVotingOpen) {
@@ -676,8 +743,11 @@ function performThrow(username, { bypassCooldown = false, isTest = false } = {})
   const golden = crypto.randomInt(100) < config.goldenChance;
   const multiplier = golden ? config.goldenMultiplier : 1;
   const before = state.progress;
-  const requestedGain = config.fillPerThrow * multiplier;
+  const baseFill = emote ? emote.fill : config.fillPerThrow;
+  const requestedGain = baseFill * multiplier;
   state.progress = Math.min(100, state.progress + requestedGain);
+  const punishmentBonusAdded = emote ? emote.punishmentBonus : 0;
+  state.punishmentBonus = Math.min(100, state.punishmentBonus + punishmentBonusAdded);
   const gained = state.progress - before;
   state.throwCount += 1;
   state.lastThrower = cleanUsername;
@@ -685,7 +755,13 @@ function performThrow(username, { bypassCooldown = false, isTest = false } = {})
   broadcast('throw', {
     username: cleanUsername,
     emoji,
+    emoteName: emote ? emote.name : '',
+    emoteKind: emote ? emote.kind : '',
+    emoteId: emoteId && /^\d+$/.test(String(emoteId)) ? String(emoteId) : '',
     progress: state.progress,
+    baseFill,
+    punishmentBonusAdded,
+    punishmentBonusTotal: state.punishmentBonus,
     isTest,
     golden,
     multiplier,
@@ -696,7 +772,7 @@ function performThrow(username, { bypassCooldown = false, isTest = false } = {})
   if (golden) {
     broadcast('goldenThrow', { username: cleanUsername, emoji, gained, multiplier, progress: state.progress });
   }
-  console.log('[CHAT] !throw: ' + cleanUsername + ' ' + emoji + (golden ? ' GOLDEN x' + multiplier : '') + ' (+' + gained + '%, ' + state.progress + '%)');
+  console.log('[CHAT] !throw: ' + cleanUsername + (emote ? ' :' + emote.name + ':' : ' ' + emoji) + (golden ? ' GOLDEN x' + multiplier : '') + ' (+' + gained + '%, ' + state.progress + '%; punishment bonus +' + punishmentBonusAdded + '%p)');
 
   if (state.progress >= 100) completePotion();
   return { accepted: true, progress: state.progress, golden, gained };
@@ -707,7 +783,9 @@ function completePotion() {
   state.progress = 100;
   state.brewing = true;
   state.potionNumber += 1;
-  const outcome = crypto.randomInt(100) < config.rewardChance ? 'reward' : 'punishment';
+  const basePunishmentChance = 100 - config.rewardChance;
+  const punishmentChance = Math.min(100, basePunishmentChance + state.punishmentBonus);
+  const outcome = crypto.randomInt(100) < punishmentChance ? 'punishment' : 'reward';
   state.currentOutcome = outcome;
   animationComplete = false;
   voteComplete = false;
@@ -715,12 +793,16 @@ function completePotion() {
   const result = {
     potionNumber: state.potionNumber,
     outcome,
+    basePunishmentChance,
+    punishmentBonus: state.punishmentBonus,
+    punishmentChance,
+    rewardChance: 100 - punishmentChance,
     message: outcome === 'reward' ? 'REWARD BREWED!' : 'PUNISHMENT BREWED!',
     timestamp: Date.now(),
   };
   broadcastState();
   broadcast('potionComplete', result);
-  console.log('[CAULDRON] Potion brewed (#' + state.potionNumber + '); outcome type: ' + outcome + '.');
+  console.log('[CAULDRON] Potion brewed (#' + state.potionNumber + '); outcome type: ' + outcome + ' (punishment chance ' + punishmentChance + '%, bonuses +' + state.punishmentBonus + '%p).');
   startOutcomeVote(outcome);
 
   if (animationFailsafeTimer) clearTimeout(animationFailsafeTimer);
@@ -821,9 +903,15 @@ async function startTwitchClient() {
         if (voteMatch && castVote(login, Number(voteMatch[0]))) return;
       }
 
-      // Exact command only: "!throw pumpkin" and "!throw 🎃" are not commands.
-      if (!/^!throw$/i.test(clean)) return;
-      const result = performThrow(username, { bypassCooldown: false, isTest: false });
+      if (!/^!throw(?:\s|$)/i.test(clean)) return;
+      const parsedThrow = parseThrowCommand(clean, tags);
+      if (!parsedThrow.matched || !parsedThrow.valid) return;
+      const result = performThrow(username, {
+        bypassCooldown: false,
+        isTest: false,
+        emote: parsedThrow.emote,
+        emoteId: parsedThrow.emoteId,
+      });
       if (!result.accepted) noticeCooldown(username, result);
     });
 
@@ -997,6 +1085,7 @@ const server = http.createServer(async (req, res) => {
     state.progress = 0;
     state.throwCount = 0;
     state.brewing = false;
+    state.punishmentBonus = 0;
     state.currentOutcome = null;
     state.lastThrower = '';
     animationComplete = false;
