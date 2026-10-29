@@ -123,7 +123,7 @@ function parseThrowCommand(message, tags) {
   return { matched: true, valid: true, emote, emoteId };
 }
 
-// Every accepted !throw uses this one fixed visual item.
+// Fallback visual item for ordinary throws; configured channel emotes override it in the overlay.
 const DEFAULT_THROW_EMOJI = '🎁';
 
 const sseClients = new Set();
