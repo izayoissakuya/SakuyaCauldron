@@ -77,7 +77,8 @@ If the overlay is refreshed mid-vote, the panel picks up where it left off.
 
 | Command | What it does |
 | --- | --- |
-| `!throw` | Throws a gift box (🎁); a 5% golden throw adds triple fill by default. |
+| `!throw` | Throws the standard gift box (🎁); a 5% golden throw adds triple fill by default. |
+| `!throw EmoteName` | Uses a configured real channel emote with its own fill and punishment-chance modifiers. |
 | `!done` | Streamer/mod completes one active reward or punishment step; the final completion removes the card and plays confetti. |
 | `!punish <text>` | Submit a punishment suggestion for moderator approval, e.g. `!punish Pistol Only | games=1`. |
 | `!reward <text>` | Submit a reward suggestion for moderator approval. |
