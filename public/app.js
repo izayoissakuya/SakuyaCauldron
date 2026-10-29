@@ -14,6 +14,10 @@ const COMPLETE_ANIMATION_MS = 8000; // 8 saniyelik animasyon süresi
 const art = document.getElementById('cauldronArt');
 const stage = document.getElementById('cauldron-widget');
 const flyLayer = document.getElementById('flyLayer');
+const throwerToast = document.getElementById('thrower-toast');
+const throwerToastName = document.getElementById('thrower-toast-name');
+const throwerToastDetail = document.getElementById('thrower-toast-detail');
+let throwerToastTimer = null;
 const progressFill = document.getElementById('progress-fill');
 const progressTrack = document.querySelector('.progress-track');
 const progressLabel = document.getElementById('progress-value');
@@ -269,16 +273,41 @@ function finishVote(result = {}) {
   voteHideTimer = window.setTimeout(hideVote, VOTE_RESULT_HOLD_MS);
 }
 
-function showFlyingItem(emoji, username = '', golden = false) {
+function showFlyingItem(emoji, username = '', golden = false, emoteData = {}) {
   if (!flyLayer) return;
 
   const item = document.createElement('span');
-  item.className = 'flying-item' + (golden ? ' golden' : '');
+  item.className = 'flying-item' + (golden ? ' golden' : '') +
+    (emoteData.emoteKind === 'animated' ? ' emote-animated' : '');
 
-  const symbol = document.createElement('span');
-  symbol.className = 'flying-emoji';
-  symbol.textContent = emoji || '🎁';
-  item.appendChild(symbol);
+  if (emoteData.emoteName) {
+    const emoteName = String(emoteData.emoteName).slice(0, 40);
+    const emoteId = String(emoteData.emoteId || '');
+    if (/^\d+$/.test(emoteId)) {
+      const image = document.createElement('img');
+      image.className = 'flying-emoji-image';
+      image.alt = emoteName;
+      const format = emoteData.emoteKind === 'animated' ? 'animated' : 'static';
+      image.src = 'https://static-cdn.jtvnw.net/emoticons/v2/' + emoteId + '/' + format + '/dark/3.0';
+      image.addEventListener('error', () => {
+        const fallback = document.createElement('span');
+        fallback.className = 'flying-custom-emote-fallback';
+        fallback.textContent = ':' + emoteName + ':';
+        image.replaceWith(fallback);
+      }, { once: true });
+      item.appendChild(image);
+    } else {
+      const fallback = document.createElement('span');
+      fallback.className = 'flying-custom-emote-fallback';
+      fallback.textContent = ':' + emoteName + ':';
+      item.appendChild(fallback);
+    }
+  } else {
+    const symbol = document.createElement('span');
+    symbol.className = 'flying-emoji';
+    symbol.textContent = emoji || '🎁';
+    item.appendChild(symbol);
+  }
 
   const safeUsername = String(username || '').trim().slice(0, 20);
   if (safeUsername) {
@@ -290,7 +319,28 @@ function showFlyingItem(emoji, username = '', golden = false) {
 
   flyLayer.appendChild(item);
   item.addEventListener('animationend', () => item.remove(), { once: true });
-  window.setTimeout(() => item.remove(), 1600);
+  window.setTimeout(() => item.remove(), 2000);
+}
+
+function showThrowerToast(data = {}) {
+  if (!throwerToast || !throwerToastName || !throwerToastDetail) return;
+  const username = String(data.username || 'Someone').trim().slice(0, 32);
+  throwerToastName.textContent = '@' + username;
+  if (data.emoteName) {
+    throwerToastDetail.textContent = 'threw :' + String(data.emoteName).slice(0, 40) + ': into the cauldron';
+  } else {
+    throwerToastDetail.textContent = 'fed the cauldron';
+  }
+
+  throwerToast.classList.remove('visible');
+  throwerToast.setAttribute('aria-hidden', 'false');
+  void throwerToast.offsetWidth;
+  throwerToast.classList.add('visible');
+  if (throwerToastTimer) window.clearTimeout(throwerToastTimer);
+  throwerToastTimer = window.setTimeout(() => {
+    throwerToast.classList.remove('visible');
+    throwerToast.setAttribute('aria-hidden', 'true');
+  }, 2800);
 }
 
 function queueAnimation(task, label) {
@@ -308,7 +358,8 @@ async function playThrow(eventData = {}) {
 
   if (THROW_ASSET) {
     setArt(THROW_ASSET, true);
-    showFlyingItem(emoji, eventData.username, Boolean(eventData.golden)); // Eşya ve kullanıcı adı tek öğe olarak düşer
+    showThrowerToast(eventData);
+    showFlyingItem(emoji, eventData.username, Boolean(eventData.golden), eventData); // İsim, öğe ve özel emote birlikte oynatılır
     if (eventData.golden) {
       configGoldenMultiplier = Math.max(2, Number(eventData.multiplier) || 3);
       if (stage) stage.classList.add('golden-throw-active');
@@ -318,7 +369,8 @@ async function playThrow(eventData = {}) {
     if (stage) stage.classList.remove('golden-throw-active');
     setArt(IDLE_ASSET, true);
   } else {
-    showFlyingItem(emoji, eventData.username, Boolean(eventData.golden));
+    showThrowerToast(eventData);
+    showFlyingItem(emoji, eventData.username, Boolean(eventData.golden), eventData);
     await delay(700);
   }
 }
