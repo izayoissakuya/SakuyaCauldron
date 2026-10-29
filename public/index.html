@@ -27,6 +27,15 @@
       </div>
 
       <div id="status-chip" class="status-chip" style="z-index: 6;">Waiting for chat...</div>
+
+      <!-- Reliable thrower callout: shown in sync with the queued throw animation. -->
+      <div id="thrower-toast" class="thrower-toast" aria-live="polite" aria-hidden="true">
+        <span class="thrower-toast-mark" aria-hidden="true">✦</span>
+        <span class="thrower-toast-copy">
+          <strong id="thrower-toast-name">@viewer</strong>
+          <span id="thrower-toast-detail">fed the cauldron</span>
+        </span>
+      </div>
     </section>
 
     <!-- Active rewards and punishments persist until a moderator/streamer uses !done. -->

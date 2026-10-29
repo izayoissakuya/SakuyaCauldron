@@ -2,7 +2,7 @@
 
 [English](README.md) · **Türkçe**
 
-Twitch chat'iyle oynanan, OBS'e eklenen hafif bir kazan overlay'i. İzleyiciler yalnızca `!throw` yazar; her seferinde aynı standart 🎁 görseli kazana düşer. Kazan %100 olunca yapılandırılan olasılığa göre **ödül veya ceza oylaması** açılır; kazanan sonuç `!done` ile tamamlanana kadar ekranda kalır.
+Twitch chat'iyle oynanan, OBS'e eklenen hafif bir kazan overlay'i. İzleyiciler `!throw` yazarak standart 🎁 atabilir; `.env` içinde tanımladığın dört kanal emotesinden birini seçerek özel dolum/ceza bonusu da verebilir. Kazan %100 olunca yapılandırılan olasılığa göre **ödül veya ceza oylaması** açılır; kazanan sonuç `!done` ile tamamlanana kadar ekranda kalır.
 
 ## Nasıl çalışır?
 
@@ -77,7 +77,8 @@ Overlay oylama sırasında yenilenirse panel kaldığı yerden devam eder.
 
 | Komut | Ne yapar |
 | --- | --- |
-| `!throw` | Kazana hediye kutusu (🎁) atar; %5 ihtimalle altın atış olur ve varsayılan olarak üç kat dolar. |
+| `!throw` | Standart hediye kutusu (🎁) atar; %5 ihtimalle altın atış olur ve varsayılan olarak üç kat dolar. |
+| `!throw EmoteName` | `.env` içinde yapılandırılmış gerçek bir kanal emotesini kullanır; dolum ve ceza ihtimali ayarları emote'a göre değişir. |
 | `!done` | Yayıncı/mod aktif ödül veya cezanın bir aşamasını tamamlar. Son aşamada kart kaldırılır ve konfeti oynar. |
 | `!punish <metin>` | Bir ceza önerisini moderatör onayına gönderir. Örn. `!punish Pistol Only | games=1`. |
 | `!reward <metin>` | Bir ödül önerisini moderatör onayına gönderir. |
@@ -85,7 +86,13 @@ Overlay oylama sırasında yenilenirse panel kaldığı yerden devam eder.
 | `!suggestions` | Moderatör bekleyen önerileri listeler. |
 | `1` … `5` | Oylama açıkken oy verir (kişi başı bir oy). |
 
-Her `!throw` komutu aynı 🎁 görselini kullanır. Komuttan sonra kelime veya emoji yazmak desteklenmez; örneğin `!throw pumpkin` bir atış başlatmaz.
+Normal atış için yalnızca `!throw` yazılır. Özel emote atışı için `!throw EmoteName` kullanılır; yalnızca `.env` içinde tanımlanmış ve Twitch'in gerçek emote etiketiyle gelen dört emote kabul edilir. Rastgele metin veya genel emoji isimleri çalışmaz. Twitch emote seçicisinden emote'u seç; Twitch'te emote adının çevresine `:` koymak gerekmez.
+
+### Kanal emote bonusları
+
+`.env` içindeki `THROW_EMOTE_1_*` ile `THROW_EMOTE_4_*` ayarları dört özel kanal emotesini tanımlar. `NAME` alanlarını emote isimlerinle doldur; boş isimli yuva devre dışıdır. 1–2 normal, 3–4 animasyonlu emote olarak ayarlanmıştır. Her emote için `KIND`, `FILL` ve `PUNISHMENT_BONUS` değerlerini ayrı ayarlayabilirsin.
+
+Örnek: `THROW_EMOTE_1_FILL=15` standart 10 yerine 15 puan doldurur; `THROW_EMOTE_1_PUNISHMENT_BONUS=2` o turdaki ceza olasılığına 2 yüzde puanı ekler. Bonuslar tur boyunca birikir, 0–100 arasında sınırlandırılır ve kazan sıfırlandığında temizlenir. Özel emote gerçek Twitch emote etiketiyle gelmelidir; yalnızca adını düz metin olarak yazmak bonus vermemelidir. Özel emote görüntüsü Twitch'in emote CDN'inden alınır.
 
 ### Bekleme süreleri ve uyarılar
 
@@ -115,14 +122,13 @@ Varsayılan seçenekler `server.js` içindeki `DEFAULT_PUNISHMENTS` ve `DEFAULT_
 | `REWARD_CHANCE` | `50` | Kazan dolunca ödül türünün seçilme olasılığı (%). Kalan olasılık ceza olur. |
 | `GOLDEN_THROW_CHANCE` | `5` | Altın atış ihtimali (%). |
 | `GOLDEN_THROW_MULTIPLIER` | `3` | Altın atış dolum çarpanı. |
-| `CAULDRON_COOLING_PER_MINUTE` | `1` | Tur boşta ilerlerken dakikada eksilen yüzde; `0` kapatır. |
-| `BLOCKED_EMOJIS` | boş | Varsayılana ek engelli emojiler. |
+| `CAULDRON_COOLING_PER_MINUTE` | `0.5` | Boşta dakikada eksilen yüzde puanı (varsayılan: 2 dakikada %1); `0` kapatır. |
 
 Not: Eski sürümlerdeki `USER_COOLDOWN_SECONDS` ve `HOST` satırları artık kullanılmaz; silebilirsin.
 
 ## Dosyalar
 
-- `server.js`: Yerel web sunucusu, Twitch OAuth, chat bağlantısı, `!throw`, emoji filtresi, bekleme süreleri, oylama ve SSE olayları.
+- `server.js`: Yerel web sunucusu, Twitch OAuth, chat bağlantısı, `!throw`, özel emote kuralları, bekleme süreleri, oylama ve SSE olayları.
 - `public/index.html`: Overlay'in HTML yapısı ve görsel katmanlar (kazan, oylama paneli, test paneli).
 - `public/style.css`: Şeffaf overlay, kazan ve oylama paneli stilleri, animasyonlar.
 - `public/app.js`: Sunucudan olayları alıp emojileri düşürür, yüzdeyi ve oylama panelini günceller.

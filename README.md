@@ -2,7 +2,7 @@
 
 **English** · [Türkçe](README_TR.md)
 
-A lightweight cauldron overlay for OBS, played through Twitch chat. Viewers type only `!throw` to drop the same standard 🎁 item into the cauldron; at 100%, the configured odds select a **reward or punishment vote**. The winning outcome stays visible until a streamer or moderator completes it with `!done`.
+A lightweight cauldron overlay for OBS, played through Twitch chat. Viewers type `!throw` for the standard 🎁 item, or `!throw EmoteName` to use one of four configured channel emotes with custom fill/odds modifiers; at 100%, the configured odds select a **reward or punishment vote**. The winning outcome stays visible until a streamer or moderator completes it with `!done`.
 
 ## How it works
 
@@ -77,7 +77,8 @@ If the overlay is refreshed mid-vote, the panel picks up where it left off.
 
 | Command | What it does |
 | --- | --- |
-| `!throw` | Throws a gift box (🎁); a 5% golden throw adds triple fill by default. |
+| `!throw` | Throws the standard gift box (🎁); a 5% golden throw adds triple fill by default. |
+| `!throw EmoteName` | Uses a configured real channel emote with its own fill and punishment-chance modifiers. |
 | `!done` | Streamer/mod completes one active reward or punishment step; the final completion removes the card and plays confetti. |
 | `!punish <text>` | Submit a punishment suggestion for moderator approval, e.g. `!punish Pistol Only | games=1`. |
 | `!reward <text>` | Submit a reward suggestion for moderator approval. |
@@ -85,7 +86,13 @@ If the overlay is refreshed mid-vote, the panel picks up where it left off.
 | `!suggestions` | Moderator lists pending suggestions. |
 | `1` … `5` | Votes while a vote is open (one vote per person). |
 
-Every `!throw` uses the same fixed 🎁 visual item. Adding a word or emoji after the command is not supported; for example, `!throw pumpkin` does not trigger a throw.
+Use bare `!throw` for the default item. A single configured channel emote can be used as `!throw EmoteName`; arbitrary words and generic emoji names are ignored. Choose the emote from Twitch's emote picker—Twitch chat emote names are sent without surrounding colons.
+
+### Channel emote bonuses
+
+The `.env` settings `THROW_EMOTE_1_*` through `THROW_EMOTE_4_*` define four channel emotes. Fill the `NAME` fields with the emote names; a blank name disables that slot. Slots 1–2 default to normal emotes and slots 3–4 to animated emotes. Each slot has independent `KIND`, `FILL`, and `PUNISHMENT_BONUS` values.
+
+Example: `THROW_EMOTE_1_FILL=15` adds 15 percentage points instead of the default 10. `THROW_EMOTE_1_PUNISHMENT_BONUS=2` adds two percentage points to the punishment chance for that cauldron round. Bonuses accumulate during the round, are capped at 100%, and reset when the cauldron resets. The custom emote must arrive with a real Twitch emote tag; typing its name as plain text does not grant the bonus. The emote image is rendered from Twitch's emote CDN.
 
 ### Cooldowns and notices
 
@@ -115,14 +122,13 @@ Rewards and punishments are not automatically integrated with a game. The stream
 | `REWARD_CHANCE` | `50` | Chance (%) that a full cauldron starts a reward vote; remaining chance starts punishment. |
 | `GOLDEN_THROW_CHANCE` | `5` | Golden throw chance (%). |
 | `GOLDEN_THROW_MULTIPLIER` | `3` | Fill multiplier for golden throws. |
-| `CAULDRON_COOLING_PER_MINUTE` | `1` | Percentage points lost per idle minute; `0` disables cooling. |
-| `BLOCKED_EMOJIS` | empty | Extra blocked emojis on top of the defaults. |
+| `CAULDRON_COOLING_PER_MINUTE` | `0.5` | Percentage points lost per idle minute (default 1% every 2 minutes); `0` disables cooling. |
 
 Note: `USER_COOLDOWN_SECONDS` and `HOST` from older versions are no longer used and can be removed.
 
 ## Files
 
-- `server.js`: local web server, Twitch OAuth, chat connection, `!throw`, emoji filter, cooldowns, voting and SSE events.
+- `server.js`: local web server, Twitch OAuth, chat connection, `!throw`, custom emote rules, cooldowns, voting and SSE events.
 - `public/index.html`: overlay markup and layers (cauldron, vote panel, test panel).
 - `public/style.css`: transparent overlay, cauldron and vote panel styles, animations.
 - `public/app.js`: receives server events, drops emojis, updates the percentage and the vote panel.
