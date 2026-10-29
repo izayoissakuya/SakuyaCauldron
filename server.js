@@ -115,12 +115,12 @@ function parseThrowCommand(message, tags) {
   if (!emote) {
     return { matched: true, valid: false, reason: 'Only !throw or !throw <configured channel emote> is supported.' };
   }
-  return {
-    matched: true,
-    valid: true,
-    emote,
-    emoteId: findTwitchEmoteId(tags, String(message || '').trim(), rawToken),
-  };
+  const emoteId = findTwitchEmoteId(tags, String(message || ''), rawToken);
+  // Don't let viewers type a custom emote's name as plain text to claim its bonus.
+  if (!emoteId) {
+    return { matched: true, valid: false, reason: 'The configured channel emote must be used from Twitch chat.' };
+  }
+  return { matched: true, valid: true, emote, emoteId };
 }
 
 // Every accepted !throw uses this one fixed visual item.
@@ -904,7 +904,7 @@ async function startTwitchClient() {
       }
 
       if (!/^!throw(?:\s|$)/i.test(clean)) return;
-      const parsedThrow = parseThrowCommand(clean, tags);
+      const parsedThrow = parseThrowCommand(message, tags);
       if (!parsedThrow.matched || !parsedThrow.valid) return;
       const result = performThrow(username, {
         bypassCooldown: false,
