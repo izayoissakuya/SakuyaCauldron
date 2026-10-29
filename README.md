@@ -2,7 +2,7 @@
 
 **English** · [Türkçe](README_TR.md)
 
-A lightweight cauldron overlay for OBS, played through Twitch chat. Viewers type `!throw` to drop an emoji into the cauldron; at 100%, the configured odds select a **reward or punishment vote**. The winning outcome stays visible until a streamer or moderator completes it with `!done`.
+A lightweight cauldron overlay for OBS, played through Twitch chat. Viewers type only `!throw` to drop the same standard 🎁 item into the cauldron; at 100%, the configured odds select a **reward or punishment vote**. The winning outcome stays visible until a streamer or moderator completes it with `!done`.
 
 ## How it works
 
@@ -83,16 +83,9 @@ If the overlay is refreshed mid-vote, the panel picks up where it left off.
 | `!reward <text>` | Submit a reward suggestion for moderator approval. |
 | `!approve <id>` / `!reject <id>` | Moderator approves or rejects a pending suggestion. |
 | `!suggestions` | Moderator lists pending suggestions. |
-| `!throw dragon`, `!throw pizza` | Throws the emoji matching the word (English keywords). |
-| `!throw kedi`, `!throw cadı` | Turkish shortcuts: kedi, köpek, fare, hayalet, balkabağı, yarasa, örümcek, cadı, hediye, pizza, kalp, ejderha, kurukafa. |
-| `!throw 🎃` | Throws the emoji you typed. |
 | `1` … `5` | Votes while a vote is open (one vote per person). |
 
-If nothing matches, 🎁 drops.
-
-### Emoji filter
-
-The server checks the emoji against a blocklist before it reaches the screen. A blocked emoji still counts as a throw but a 🎁 drops instead. The default blocklist is 🍆 🍑 💦 🖕 🔞 👅 💉 💊 🚬. Add your own by listing them in `BLOCKED_EMOJIS` in `.env` (e.g. `BLOCKED_EMOJIS=🔫🍺`), or edit `DEFAULT_BLOCKED_EMOJIS` in `server.js` to change the defaults.
+Every `!throw` uses the same fixed 🎁 visual item. Adding a word or emoji after the command is not supported; for example, `!throw pumpkin` does not trigger a throw.
 
 ### Cooldowns and notices
 

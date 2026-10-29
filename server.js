@@ -8,7 +8,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const tmi = require('tmi.js');
-const EMOJI_KEYWORDS = require('emojilib');
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -60,132 +59,8 @@ function clampInt(value, fallback, min, max) {
   return Math.min(max, Math.max(min, parsed));
 }
 
-const ALLOWED_EMOJIS = ['🎃', '👻', '🦇', '🕷️', '🧙', '🖤', '🍬', '🐈‍⬛', '💀', '🧪', '🕯️', '😈'];
-
-const TURKISH_EMOJI_ALIASES = {
-  'kedi': '🐈',
-  'kediler': '🐈',
-  'köpek': '🐕',
-  'kopek': '🐕',
-  'fare': '🐀',
-  'sıçan': '🐀',
-  'sican': '🐀',
-  'hayalet': '👻',
-  'balkabağı': '🎃',
-  'balkabagi': '🎃',
-  'yarasa': '🦇',
-  'örümcek': '🕷️',
-  'orumcek': '🕷️',
-  'cadı': '🧙',
-  'cadi': '🧙',
-  'hediye': '🎁',
-  'pizza': '🍕',
-  'kalp': '❤️',
-  'ejderha': '🐉',
-  'kurukafa': '💀',
-};
-
-function normalizeEmojiText(value) {
-  return String(value || '')
-    .toLocaleLowerCase('tr')
-    .replace(/[_-]/g, ' ')
-    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// ---------------------------------------------------------------------------
-// Emoji filtresi
-// ---------------------------------------------------------------------------
+// Every accepted !throw uses this one fixed visual item.
 const DEFAULT_THROW_EMOJI = '🎁';
-// Yayında göstermek istemediğin emojiler. Kendi eklemelerini .env içindeki
-// BLOCKED_EMOJIS satırına yan yana yazabilirsin (örn. BLOCKED_EMOJIS=🔫🍺).
-const DEFAULT_BLOCKED_EMOJIS = '🍆🍑💦🖕🔞👅💉💊🚬';
-const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
-const PICTOGRAPHIC = /\p{Extended_Pictographic}/u;
-
-// Görünüm seçicisi (FE0F) ve ten rengi farklarını yok sayarak karşılaştır
-function emojiKey(value) {
-  return String(value || '').replace(/[︎️\u{1F3FB}-\u{1F3FF}]/gu, '');
-}
-
-function listEmojis(text) {
-  const found = [];
-  for (const { segment } of graphemes.segment(String(text || ''))) {
-    if (PICTOGRAPHIC.test(segment)) found.push(segment);
-  }
-  return found;
-}
-
-const blockedEmojis = new Set(
-  listEmojis(DEFAULT_BLOCKED_EMOJIS + (process.env.BLOCKED_EMOJIS || '')).map(emojiKey)
-);
-
-function isEmojiBlocked(emoji) {
-  return blockedEmojis.has(emojiKey(emoji));
-}
-
-function findThrowEmoji(input) {
-  // Doğrudan emoji yazıldıysa (!throw 🎃) ilkini kullan
-  const [direct] = listEmojis(input);
-  if (direct) return direct;
-
-  const text = normalizeEmojiText(input);
-
-  // Boş komut: hediye kutusu
-  if (!text) return DEFAULT_THROW_EMOJI;
-
-  // Türkçe özel eşleştirmeler
-  if (TURKISH_EMOJI_ALIASES[text]) {
-    return TURKISH_EMOJI_ALIASES[text];
-  }
-
-  // Emoji kütüphanesinde tam ifade eşleşmesi ara
-  for (const [emoji, keywords] of Object.entries(EMOJI_KEYWORDS)) {
-    if (keywords.some(keyword =>
-      normalizeEmojiText(keyword) === text
-    )) {
-      return emoji;
-    }
-  }
-
-  // Birden fazla kelime varsa en anlamlı eşleşmeyi ara.
-  // Örneğin "red dragon" ifadesinde "dragon" bulunabilir.
-  const words = text.split(' ').filter(word => word.length >= 2);
-  let bestEmoji = null;
-  let bestScore = 0;
-
-  for (const [emoji, keywords] of Object.entries(EMOJI_KEYWORDS)) {
-    for (const keyword of keywords) {
-      const normalizedKeyword = normalizeEmojiText(keyword);
-      const keywordWords = normalizedKeyword.split(' ');
-
-      for (const word of words) {
-        if (keywordWords.includes(word)) {
-          const score = word.length;
-          if (score > bestScore) {
-            bestScore = score;
-            bestEmoji = emoji;
-          }
-        }
-      }
-    }
-  }
-
-  // Hiçbir eşleşme bulunmazsa hediye kutusu
-  return bestEmoji || '🎁';
-}
-
-// Chat'ten gelen metni ekrana düşecek emojiye çevirir; engelli emoji çıkarsa
-// atış yine sayılır ama hediye kutusu düşer.
-function resolveThrowEmoji(input) {
-  const emoji = findThrowEmoji(input);
-  if (isEmojiBlocked(emoji)) {
-    console.log(`[FILTER] Engelli emoji hediye kutusuna cevrildi: ${emoji}`);
-    return DEFAULT_THROW_EMOJI;
-  }
-  return emoji;
-}
 
 const sseClients = new Set();
 const cooldowns = new Map();
@@ -766,7 +641,7 @@ function noticeCooldown(username, result) {
   chatSay(`@${username}, you can throw again in ${formatWait(result.remaining)}.`);
 }
 
-function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest = false } = {}) {
+function performThrow(username, { bypassCooldown = false, isTest = false } = {}) {
   const cleanUsername = String(username || 'viewer').trim().slice(0, 32);
   const usernameKey = cleanUsername.toLowerCase();
   if (!cleanUsername || state.brewing || isVotingOpen) {
@@ -797,7 +672,7 @@ function performThrow(username, requestedEmoji, { bypassCooldown = false, isTest
 
   const wasEmpty = state.progress <= 0;
   if (wasEmpty) lastCoolingAt = now;
-  const emoji = requestedEmoji || '🎁';
+  const emoji = DEFAULT_THROW_EMOJI;
   const golden = crypto.randomInt(100) < config.goldenChance;
   const multiplier = golden ? config.goldenMultiplier : 1;
   const before = state.progress;
@@ -946,10 +821,9 @@ async function startTwitchClient() {
         if (voteMatch && castVote(login, Number(voteMatch[0]))) return;
       }
 
-      const match = /^!throw(?:\s+([\s\S]*))?$/i.exec(clean);
-      if (!match) return;
-      const requestedEmoji = resolveThrowEmoji(match[1] || '');
-      const result = performThrow(username, requestedEmoji, { bypassCooldown: false, isTest: false });
+      // Exact command only: "!throw pumpkin" and "!throw 🎃" are not commands.
+      if (!/^!throw$/i.test(clean)) return;
+      const result = performThrow(username, { bypassCooldown: false, isTest: false });
       if (!result.accepted) noticeCooldown(username, result);
     });
 
@@ -1095,9 +969,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && pathname === '/api/test/throw') {
     testThrowNumber += 1;
-    const emoji = ALLOWED_EMOJIS[(testThrowNumber - 1) % ALLOWED_EMOJIS.length];
     const username = `TestViewer${testThrowNumber}`;
-    const result = performThrow(username, emoji, { bypassCooldown: true, isTest: true });
+    const result = performThrow(username, { bypassCooldown: true, isTest: true });
     return sendJson(res, result.accepted ? 200 : 409, result);
   }
   if (req.method === 'POST' && pathname === '/api/test/start-vote') {

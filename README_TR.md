@@ -2,7 +2,7 @@
 
 [English](README.md) · **Türkçe**
 
-Twitch chat'iyle oynanan, OBS'e eklenen hafif bir kazan overlay'i. İzleyiciler `!throw` ile kazana emoji atar. Kazan %100 olunca yapılandırılan olasılığa göre **ödül veya ceza oylaması** açılır; kazanan sonuç `!done` ile tamamlanana kadar ekranda kalır.
+Twitch chat'iyle oynanan, OBS'e eklenen hafif bir kazan overlay'i. İzleyiciler yalnızca `!throw` yazar; her seferinde aynı standart 🎁 görseli kazana düşer. Kazan %100 olunca yapılandırılan olasılığa göre **ödül veya ceza oylaması** açılır; kazanan sonuç `!done` ile tamamlanana kadar ekranda kalır.
 
 ## Nasıl çalışır?
 
@@ -83,16 +83,9 @@ Overlay oylama sırasında yenilenirse panel kaldığı yerden devam eder.
 | `!reward <metin>` | Bir ödül önerisini moderatör onayına gönderir. |
 | `!approve <id>` / `!reject <id>` | Moderatör, bekleyen öneriyi onaylar veya reddeder. |
 | `!suggestions` | Moderatör bekleyen önerileri listeler. |
-| `!throw dragon`, `!throw pizza` | Kelimeye uyan emojiyi atar (İngilizce anahtar kelimeler). |
-| `!throw kedi`, `!throw cadı` | Türkçe kısayollar: kedi, köpek, fare, hayalet, balkabağı, yarasa, örümcek, cadı, hediye, pizza, kalp, ejderha, kurukafa. |
-| `!throw 🎃` | Doğrudan yazılan emojiyi atar. |
 | `1` … `5` | Oylama açıkken oy verir (kişi başı bir oy). |
 
-Eşleşme bulunamazsa 🎁 düşer.
-
-### Emoji filtresi
-
-Sunucu, ekrana düşecek emojiyi engelli listeyle karşılaştırır; engelliyse atış yine sayılır ama 🎁 düşer. Varsayılan engelli liste: 🍆 🍑 💦 🖕 🔞 👅 💉 💊 🚬. Kendi emojilerini `.env` içindeki `BLOCKED_EMOJIS` satırına yan yana yazarak ekleyebilirsin (örn. `BLOCKED_EMOJIS=🔫🍺`). Varsayılan listeyi değiştirmek istersen `server.js` içindeki `DEFAULT_BLOCKED_EMOJIS` satırını düzenle.
+Her `!throw` komutu aynı 🎁 görselini kullanır. Komuttan sonra kelime veya emoji yazmak desteklenmez; örneğin `!throw pumpkin` bir atış başlatmaz.
 
 ### Bekleme süreleri ve uyarılar
 
