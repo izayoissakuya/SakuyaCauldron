@@ -256,7 +256,8 @@ function loadCommunityData() {
       activeOutcomes: Array.isArray(parsed.activeOutcomes) ? parsed.activeOutcomes : [],
     };
   } catch (error) {
-    console.warn('[COMMUNITY] community-data.json could not be read; defaults loaded:', error.message);
+    try { fs.copyFileSync(COMMUNITY_PATH, COMMUNITY_PATH + '.bozuk-' + Date.now()); } catch (_) {}
+    console.warn('[COMMUNITY] community-data.json could not be read; backed up as .bozuk-* and defaults loaded:', error.message);
     return defaults;
   }
 }
@@ -288,6 +289,7 @@ let animationFailsafeTimer = null;
 function cleanSuggestionLabel(input) {
   return String(input || '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80);
@@ -491,8 +493,19 @@ function parseSuggestionPayload(payload) {
   return { label, remaining, unit };
 }
 
+const SUGGEST_COOLDOWN_MS = Math.max(0, Number(process.env.SUGGEST_COOLDOWN_SECONDS || 120)) * 1000;
+const lastSuggestionAt = new Map();
+
 function submitCommunitySuggestion(type, payload, username) {
   const item = parseSuggestionPayload(payload);
+  const who = String(username || '').toLowerCase();
+  const waitMs = (lastSuggestionAt.get(who) || 0) + SUGGEST_COOLDOWN_MS - Date.now();
+  if (waitMs > 0) return; // sessiz: spam'e bot cevap vermesin
+  if (/@|https?:|www\.|\b[\w-]+\.(com|net|org|tv|gg|io|ly|me|xyz|co|tr)\b/i.test(item.label)) {
+    chatSay('@' + username + ', links and @mentions are not allowed in suggestions.');
+    lastSuggestionAt.set(who, Date.now());
+    return;
+  }
   if (item.label.length < 3) {
     chatSay('@' + username + ', please provide a suggestion of at least 3 characters.');
     return;
@@ -524,6 +537,7 @@ function submitCommunitySuggestion(type, payload, username) {
     createdAt: Date.now(),
   };
   communityData.pendingSuggestions.push(suggestion);
+  lastSuggestionAt.set(who, Date.now());
   persistCommunityData();
   chatSay('💡 @' + username + ', suggestion #' + suggestion.id + ' submitted for moderator review (' + type + ').');
   broadcast('suggestionsUpdate', { pendingCount: communityData.pendingSuggestions.length });
