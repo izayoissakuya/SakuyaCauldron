@@ -155,17 +155,17 @@ let lastCoolingAt = Date.now();
 // ---------------------------------------------------------------------------
 const DEFAULT_PUNISHMENTS = [
   { label: '20 Push-ups', remaining: 1, unit: 'task' },
-  { label: 'Eat a Lemon', remaining: 1, unit: 'task' },
-  { label: 'Pistol Only for 1 game', remaining: 1, unit: 'game' },
+  { label: 'Play 1 Game Ranked', remaining: 1, unit: 'task' },
+  { label: 'Flamethrow Only for 1 game', remaining: 1, unit: 'game' },
   { label: 'Play without skill 1 game', remaining: 1, unit: 'game' },
   { label: 'VIP a Random Chatter', remaining: 1, unit: 'task' },
 ];
 const DEFAULT_REWARDS = [
-  { label: 'Choose the next game mode', remaining: 1, unit: 'task' },
-  { label: 'Shout-out a chatter', remaining: 1, unit: 'task' },
-  { label: 'Choose the next cauldron emoji', remaining: 1, unit: 'task' },
-  { label: 'Streamer bonus round', remaining: 1, unit: 'round' },
-  { label: 'Pick the next challenge', remaining: 1, unit: 'task' },
+  { label: 'Dont Drink Water 1 Hour', remaining: 1, unit: 'task' },
+  { label: "Witch's Protection - Cancel the Next Punishment", remaining: 1, unit: 'task' },
+  { label: 'Eat 1 Cookie', remaining: 1, unit: 'task' },
+  { label: 'Take a 1 Minute Break', remaining: 1, unit: 'round' },
+  { label: 'Switch Your CrossHair', remaining: 1, unit: 'task' },
 ];
 const KEYCAPS = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣'];
 const VOTE_OPTION_COUNT = 5;
